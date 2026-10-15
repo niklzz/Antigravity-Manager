@@ -92,6 +92,8 @@ export interface PingResult {
     message: string;
     /** Model id reported in the reply body, when present (may differ from the requested one). */
     servedModel: string | null;
+    /** The full exchange, shown in the probe when the result is clicked. */
+    probe: ProbeResult | null;
 }
 
 export type PingVerdict = Pick<PingResult, 'state' | 'message' | 'servedModel'>;
@@ -130,22 +132,18 @@ export function classifyReply(protocol: ProbeProtocol, status: number, body: str
 }
 
 export async function pingModel(baseUrl: string, apiKey: string, model: string, signal?: AbortSignal): Promise<PingResult> {
-    if (/-image/i.test(model)) return { state: 'skipped', status: 0, ms: 0, message: '', servedModel: null };
+    if (/-image/i.test(model)) return { state: 'skipped', status: 0, ms: 0, message: '', servedModel: null, probe: null };
     const start = performance.now();
-    let status = 0;
-    let text = '';
+    let probe: ProbeResult;
     try {
         // No max_tokens: thinking models would otherwise spend the budget and return empty content.
-        const res = await post(baseUrl, apiKey, 'openai', model, PROBE_PROTOCOLS.openai.template(model), signal);
-        status = res.status;
-        text = await res.text();
+        probe = await sendProbe(baseUrl, apiKey, 'openai', model, JSON.stringify(PROBE_PROTOCOLS.openai.template(model)), signal);
     } catch (e) {
         if (signal?.aborted) throw e;
         const message = e instanceof Error ? e.message : String(e);
-        return { state: 'fail', status: 0, ms: Math.round(performance.now() - start), message, servedModel: null };
+        return { state: 'fail', status: 0, ms: Math.round(performance.now() - start), message, servedModel: null, probe: null };
     }
-    const ms = Math.round(performance.now() - start);
-    const verdict = classifyReply('openai', status, text)
-        ?? { state: status === 429 ? 'limited' : 'fail', message: text.slice(0, 300), servedModel: null };
-    return { ...verdict, status, ms };
+    const verdict = classifyReply('openai', probe.status, probe.body)
+        ?? { state: probe.status === 429 ? 'limited' : 'fail', message: probe.body.slice(0, 300), servedModel: null };
+    return { ...verdict, status: probe.status, ms: probe.totalMs, probe };
 }

@@ -171,7 +171,7 @@ export default function ApiProxy() {
     const [copied, setCopied] = useState<string | null>(null);
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3.8-flash-tiered');
-    const [probeModel, setProbeModel] = useState<{ id: string; autoSend: boolean } | null>(null);
+    const [probeModel, setProbeModel] = useState<{ id: string; initialResult: PingResult['probe'] } | null>(null);
     const [pingResults, setPingResults] = useState<Record<string, PingResult | 'running'>>({});
     const [pingFilter, setPingFilter] = useState<'all' | 'ok' | 'fail' | 'limited'>('all');
     const [pinging, setPinging] = useState(false);
@@ -1088,7 +1088,7 @@ print(response.choices[0].message.content)`;
                 title={`${t(`proxy.probe.status_${r.state}`)}${r.message ? `\n${r.message}` : ''}\n${t('proxy.probe.details')}`}
                 onClick={(e) => {
                     e.stopPropagation();
-                    setProbeModel({ id: modelId, autoSend: true });
+                    setProbeModel({ id: modelId, initialResult: r.probe });
                 }}
             >
                 <span className="inline-flex items-center gap-1">
@@ -2750,7 +2750,7 @@ print(response.choices[0].message.content)`;
                     <RequestProbeModal
                         key={probeModel.id}
                         model={probeModel.id}
-                        autoSend={probeModel.autoSend}
+                        initialResult={probeModel.initialResult}
                         baseUrl={getProbeBaseUrl()}
                         apiKey={appConfig.proxy.api_key}
                         onClose={() => setProbeModel(null)}

@@ -108,6 +108,14 @@ async function main(): Promise<void> {
         assertEqual(r.servedModel, 'gemini-3.5-flash-low');
     });
 
+    await test('pingModel keeps the full exchange for the probe, with a single request', async () => {
+        mockFetch(200, { choices: [{ message: { content: 'pong' } }] });
+        const r = await pingModel(BASE, 'sk', 'gemini-3.8-flash');
+        assertEqual(fetchCalls, 1);
+        assertEqual(r.probe?.status, 200);
+        assertEqual(r.probe?.body.includes('pong'), true);
+    });
+
     await test('classifyReply: Anthropic and Gemini replies with pong → ok', async () => {
         assertEqual(classifyReply('anthropic', 200, JSON.stringify({ content: [{ type: 'text', text: 'pong' }] }))?.state, 'ok');
         assertEqual(classifyReply('gemini', 200, JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Pong.' }] } }] }))?.state, 'ok');

@@ -10,8 +10,8 @@ interface RequestProbeModalProps {
     model: string;
     baseUrl: string;
     apiKey: string;
-    /** Send the template right away (opened from a status cell). */
-    autoSend?: boolean;
+    /** Result of an earlier check to show on open (opened from a status cell); no request is sent. */
+    initialResult?: ProbeResult | null;
     onClose: () => void;
 }
 
@@ -27,11 +27,11 @@ function prettyBody(body: string): string {
     }
 }
 
-export function RequestProbeModal({ model, baseUrl, apiKey, autoSend, onClose }: RequestProbeModalProps) {
+export function RequestProbeModal({ model, baseUrl, apiKey, initialResult, onClose }: RequestProbeModalProps) {
     const { t } = useTranslation();
     const [protocol, setProtocol] = useState<ProbeProtocol>('openai');
     const [bodyText, setBodyText] = useState(() => templateText('openai', model));
-    const [result, setResult] = useState<ProbeResult | null>(null);
+    const [result, setResult] = useState<ProbeResult | null>(initialResult ?? null);
     const [error, setError] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
@@ -66,9 +66,6 @@ export function RequestProbeModal({ model, baseUrl, apiKey, autoSend, onClose }:
     const responseText = result ? prettyBody(result.body) : '';
     const verdict = result ? classifyReply(protocol, result.status, result.body) : null;
     const servedModel = verdict?.servedModel ?? result?.mappedModel ?? null;
-
-    // Mount-only: autoSend is fixed for the modal's lifetime.
-    useEffect(() => { if (autoSend) void send(); }, []);
 
     return (
         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
