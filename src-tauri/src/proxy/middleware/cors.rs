@@ -1,5 +1,5 @@
 // CORS 中间件
-use axum::http::Method;
+use axum::http::{HeaderName, Method};
 use tower_http::cors::{Any, CorsLayer};
 
 /// 创建 CORS layer
@@ -16,6 +16,10 @@ pub fn cors_layer() -> CorsLayer {
             Method::PATCH,
         ])
         .allow_headers(Any)
+        .expose_headers([
+            HeaderName::from_static("x-account-email"),
+            HeaderName::from_static("x-mapped-model"),
+        ])
         .allow_credentials(false)
         .max_age(std::time::Duration::from_secs(3600))
 }
