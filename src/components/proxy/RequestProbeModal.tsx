@@ -122,14 +122,14 @@ export function RequestProbeModal({ model, baseUrl, apiKey, autoSend, onClose }:
                         />
                     </label>
                     <div className="flex items-center justify-between">
-                        <button type="button" onClick={() => setBodyText(templateText(protocol, model))} className="btn btn-ghost btn-xs gap-1">
+                        <button type="button" onClick={() => setBodyText(templateText(protocol, model))} className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border border-gray-200 dark:border-base-300 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all disabled:opacity-40">
                             <RotateCcw size={12} /> {t('proxy.probe.template')}
                         </button>
                         <div className="flex gap-2">
-                            <button type="button" onClick={() => abortRef.current?.abort()} disabled={!sending} className="btn btn-xs gap-1">
+                            <button type="button" onClick={() => abortRef.current?.abort()} disabled={!sending} className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border border-gray-200 dark:border-base-300 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all disabled:opacity-40">
                                 <Square size={12} /> {t('proxy.probe.stop')}
                             </button>
-                            <button type="button" onClick={send} disabled={sending} className="btn btn-primary btn-xs gap-1">
+                            <button type="button" onClick={send} disabled={sending} className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100">
                                 {sending ? <span className="loading loading-spinner loading-xs" /> : <Play size={12} />} {t('proxy.probe.send')}
                             </button>
                         </div>
@@ -170,7 +170,7 @@ export function RequestProbeModal({ model, baseUrl, apiKey, autoSend, onClose }:
                                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('proxy.probe.response')}</span>
                                 <button
                                     type="button"
-                                    className="btn btn-ghost btn-xs"
+                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border border-gray-200 dark:border-base-300 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all disabled:opacity-40"
                                     onClick={() => copyToClipboard(responseText).then((ok) => ok && showToast(t('common.copied'), 'success'))}
                                 >
                                     {t('common.copy')}

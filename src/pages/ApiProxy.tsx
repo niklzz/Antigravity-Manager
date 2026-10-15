@@ -1064,7 +1064,7 @@ print(response.choices[0].message.content)`;
             return (
                 <button
                     type="button"
-                    className="btn btn-xs btn-outline btn-primary gap-1 font-sans"
+                    className="px-2 py-0.5 rounded-md text-[11px] font-semibold font-sans inline-flex items-center gap-1 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-40"
                     disabled={!appConfig}
                     onClick={(e) => {
                         e.stopPropagation();
@@ -1504,10 +1504,10 @@ print(response.choices[0].message.content)`;
                             {t('proxy.supported_models.title')}
                         </h2>
                         <div className="flex gap-1.5">
-                            <button type="button" className="btn btn-xs gap-1" onClick={runTestAll} disabled={pinging}>
+                            <button type="button" className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100" onClick={runTestAll} disabled={pinging}>
                                 {pinging ? <span className="loading loading-spinner loading-xs" /> : <Play size={12} />} {t('proxy.probe.test_all')}
                             </button>
-                            <button type="button" className="btn btn-xs gap-1" onClick={() => pingAbortRef.current?.abort()} disabled={!pinging}>
+                            <button type="button" className="px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border border-gray-200 dark:border-base-300 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all disabled:opacity-40" onClick={() => pingAbortRef.current?.abort()} disabled={!pinging}>
                                 <Square size={12} /> {t('proxy.probe.stop')}
                             </button>
                         </div>
