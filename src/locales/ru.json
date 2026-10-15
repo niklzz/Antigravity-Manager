@@ -1438,7 +1438,15 @@
       "account": "Аккаунт",
       "mapped_model": "Сопоставлено",
       "response": "Ответ",
-      "invalid_json": "Некорректный JSON, запрос не отправлен"
+      "invalid_json": "Некорректный JSON, запрос не отправлен",
+      "test_all": "Проверить все",
+      "tested": "Проверено {{done}}/{{total}}",
+      "status": "Статус",
+      "status_ok": "OK",
+      "status_fail": "Ошибка",
+      "status_limited": "Лимит запросов или квота исчерпана (модель работает)",
+      "status_skipped": "Пропущено (модели изображений не проверяются)",
+      "filter_all": "Все"
     }
   },
   "monitor": {

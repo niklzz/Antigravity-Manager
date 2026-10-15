@@ -1370,7 +1370,15 @@
       "account": "Cuenta",
       "mapped_model": "Mapeado",
       "response": "Respuesta",
-      "invalid_json": "JSON no válido, solicitud no enviada"
+      "invalid_json": "JSON no válido, solicitud no enviada",
+      "test_all": "Probar todos",
+      "tested": "{{done}}/{{total}} probados",
+      "status": "Estado",
+      "status_ok": "OK",
+      "status_fail": "Fallido",
+      "status_limited": "Límite de tasa o cuota agotada (el modelo funciona)",
+      "status_skipped": "Omitido (los modelos de imagen no se prueban)",
+      "filter_all": "Todos"
     }
   },
   "monitor": {

@@ -1499,7 +1499,15 @@
       "account": "账号",
       "mapped_model": "映射",
       "response": "响应",
-      "invalid_json": "JSON 无效，未发送请求"
+      "invalid_json": "JSON 无效，未发送请求",
+      "test_all": "全部测试",
+      "tested": "已测试 {{done}}/{{total}}",
+      "status": "状态",
+      "status_ok": "正常",
+      "status_fail": "失败",
+      "status_limited": "限流或配额耗尽（模型可用）",
+      "status_skipped": "已跳过（图像模型不参与测试）",
+      "filter_all": "全部"
     }
   },
   "monitor": {

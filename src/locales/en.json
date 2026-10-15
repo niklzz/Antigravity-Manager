@@ -1505,7 +1505,15 @@
       "account": "Account",
       "mapped_model": "Mapped",
       "response": "Response",
-      "invalid_json": "Invalid JSON, request not sent"
+      "invalid_json": "Invalid JSON, request not sent",
+      "test_all": "Test all",
+      "tested": "{{done}}/{{total}} tested",
+      "status": "Status",
+      "status_ok": "OK",
+      "status_fail": "Failed",
+      "status_limited": "Rate-limited or out of quota (model is alive)",
+      "status_skipped": "Skipped (image models are not pinged)",
+      "filter_all": "All"
     }
   },
   "monitor": {

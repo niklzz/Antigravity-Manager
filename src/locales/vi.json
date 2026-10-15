@@ -1421,7 +1421,15 @@
       "account": "Tài khoản",
       "mapped_model": "Ánh xạ",
       "response": "Phản hồi",
-      "invalid_json": "JSON không hợp lệ, chưa gửi yêu cầu"
+      "invalid_json": "JSON không hợp lệ, chưa gửi yêu cầu",
+      "test_all": "Kiểm tra tất cả",
+      "tested": "Đã kiểm tra {{done}}/{{total}}",
+      "status": "Trạng thái",
+      "status_ok": "OK",
+      "status_fail": "Thất bại",
+      "status_limited": "Bị giới hạn tốc độ hoặc hết hạn mức (mô hình vẫn hoạt động)",
+      "status_skipped": "Bỏ qua (không kiểm tra mô hình hình ảnh)",
+      "filter_all": "Tất cả"
     }
   },
   "monitor": {

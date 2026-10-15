@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, startTransition } from 'react';
+import { useState, useEffect, useMemo, useRef, startTransition } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../utils/request';
 import { isTauri } from '../utils/env';
@@ -23,7 +23,10 @@ import {
     Save,
     Share2,
     Bot,
-    FlaskConical
+    FlaskConical,
+    Play,
+    Square,
+    Info
 } from 'lucide-react';
 import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
@@ -34,6 +37,7 @@ import { useProxyModels } from '../hooks/useProxyModels';
 import GroupedSelect, { SelectOption } from '../components/common/GroupedSelect';
 import { CliSyncCard } from '../components/proxy/CliSyncCard';
 import { RequestProbeModal } from '../components/proxy/RequestProbeModal';
+import { pingModel, type PingResult } from '../utils/proxyProbe';
 import { listAccounts } from '../services/accountService';
 import CircuitBreaker from '../components/settings/CircuitBreaker';
 import GlobalSystemPrompt from '../components/settings/GlobalSystemPrompt';
@@ -169,6 +173,10 @@ export default function ApiProxy() {
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3.8-flash-tiered');
     const [probeModel, setProbeModel] = useState<string | null>(null);
+    const [pingResults, setPingResults] = useState<Record<string, PingResult | 'running'>>({});
+    const [pingFilter, setPingFilter] = useState<'all' | 'ok' | 'fail' | 'limited'>('all');
+    const [pinging, setPinging] = useState(false);
+    const pingAbortRef = useRef<AbortController | null>(null);
     const [customMappingValue, setCustomMappingValue] = useState(''); // 自定义映射表单的选中值
     const [editingKey, setEditingKey] = useState<string | null>(null);
     const [editingValue, setEditingValue] = useState<string>('');
@@ -996,10 +1004,75 @@ print(response.choices[0].message.content)`;
         return true;
     });
 
+    // Supported Models chip filter, applied on top of the protocol filter.
+    const visibleModels = pingFilter === 'all' ? filteredModels : filteredModels.filter(m => {
+        const r = pingResults[m.id];
+        return r && r !== 'running' && r.state === pingFilter;
+    });
+    const pingCounts = { tested: 0, ok: 0, fail: 0, limited: 0, skipped: 0 };
+    for (const m of filteredModels) {
+        const r = pingResults[m.id];
+        if (!r || r === 'running') continue;
+        pingCounts.tested += 1;
+        pingCounts[r.state] += 1;
+    }
+
     // In web/headless mode the UI may be opened from another machine, so call the proxy on the page origin.
     const getProbeBaseUrl = () => isTauri()
         ? (status.running ? status.base_url : `http://127.0.0.1:${appConfig?.proxy.port || 8045}`)
         : window.location.origin;
+
+    useEffect(() => () => pingAbortRef.current?.abort(), []);
+
+    const runTestAll = async () => {
+        if (!appConfig || pinging) return;
+        const controller = new AbortController();
+        pingAbortRef.current = controller;
+        setPinging(true);
+        const queue = visibleModels.map(m => m.id);
+        const baseUrl = getProbeBaseUrl();
+        const apiKey = appConfig.proxy.api_key;
+        const worker = async () => {
+            for (let id = queue.shift(); id && !controller.signal.aborted; id = queue.shift()) {
+                const modelId = id;
+                setPingResults(prev => ({ ...prev, [modelId]: 'running' }));
+                try {
+                    const result = await pingModel(baseUrl, apiKey, modelId, controller.signal);
+                    setPingResults(prev => ({ ...prev, [modelId]: result }));
+                } catch {
+                    // Aborted: drop the spinner and leave the row untested.
+                    setPingResults(prev => {
+                        const next = { ...prev };
+                        delete next[modelId];
+                        return next;
+                    });
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: 3 }, worker));
+        if (pingAbortRef.current === controller) pingAbortRef.current = null;
+        setPinging(false);
+    };
+
+    const renderPingStatus = (modelId: string) => {
+        const r = pingResults[modelId];
+        if (!r) return null;
+        if (r === 'running') return <span className="loading loading-spinner loading-xs text-gray-400" />;
+        if (r.state === 'skipped') return <span className="text-gray-400" title={t('proxy.probe.status_skipped')}>–</span>;
+        if (r.state === 'ok') {
+            return <span className="text-green-600 dark:text-green-400" title={t('proxy.probe.status_ok')}>✓ {(r.ms / 1000).toFixed(1)}s</span>;
+        }
+        const limited = r.state === 'limited';
+        return (
+            <span
+                className={cn('inline-flex items-center gap-1', limited ? 'text-amber-500' : 'text-red-500')}
+                title={`${t(limited ? 'proxy.probe.status_limited' : 'proxy.probe.status_fail')}${r.message ? `\n${r.message}` : ''}`}
+            >
+                {limited ? '⚠' : '✗'} {r.status || 'ERR'}
+                {r.message && <Info size={11} className="opacity-70" />}
+            </span>
+        );
+    };
 
     const renderModelRouterSection = () => {
         if (!appConfig) return null;
@@ -1400,11 +1473,49 @@ print(response.choices[0].message.content)`;
         if (!appConfig) return null;
         return (
             <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-gray-100 dark:border-base-200">
-                    <h2 className="text-base font-bold text-gray-900 dark:text-base-content flex items-center gap-2">
-                        <Terminal size={18} />
-                        {t('proxy.supported_models.title')}
-                    </h2>
+                <div className="px-4 py-2.5 border-b border-gray-100 dark:border-base-200 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                        <h2 className="text-base font-bold text-gray-900 dark:text-base-content flex items-center gap-2">
+                            <Terminal size={18} />
+                            {t('proxy.supported_models.title')}
+                        </h2>
+                        <div className="flex gap-1.5">
+                            <button type="button" className="btn btn-xs gap-1" onClick={runTestAll} disabled={pinging}>
+                                {pinging ? <span className="loading loading-spinner loading-xs" /> : <Play size={12} />} {t('proxy.probe.test_all')}
+                            </button>
+                            <button type="button" className="btn btn-xs gap-1" onClick={() => pingAbortRef.current?.abort()} disabled={!pinging}>
+                                <Square size={12} /> {t('proxy.probe.stop')}
+                            </button>
+                        </div>
+                    </div>
+                    {Object.keys(pingResults).length > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                            <span className="text-gray-500">{t('proxy.probe.tested', { done: pingCounts.tested, total: filteredModels.length })}</span>
+                            <div className="flex gap-1">
+                                {([
+                                    ['all', t('proxy.probe.filter_all')],
+                                    ['ok', `✓ ${pingCounts.ok}`],
+                                    ['fail', `✗ ${pingCounts.fail}`],
+                                    ['limited', `⚠ ${pingCounts.limited}`],
+                                ] as const).map(([key, label]) => (
+                                    <button
+                                        type="button"
+                                        key={key}
+                                        onClick={() => setPingFilter(key)}
+                                        title={key === 'all' ? undefined : t(`proxy.probe.status_${key}`)}
+                                        className={cn(
+                                            'px-2.5 py-0.5 rounded-full font-medium border transition-colors',
+                                            pingFilter === key
+                                                ? 'bg-blue-500 text-white border-blue-500'
+                                                : 'bg-white dark:bg-base-200 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-base-300 hover:border-blue-400',
+                                        )}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x dark:divide-gray-700">
@@ -1418,11 +1529,12 @@ print(response.choices[0].message.content)`;
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_id')}</th>
                                         <th className="text-[11px] hidden sm:table-cell font-medium">{t('proxy.supported_models.description')}</th>
+                                        <th className="text-[11px] w-20 font-medium">{t('proxy.probe.status')}</th>
                                         <th className="text-[11px] w-28 text-center font-medium">{t('proxy.supported_models.action')}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredModels.map((m) => (
+                                    {visibleModels.map((m) => (
                                         <tr
                                             key={m.id}
                                             className={`hover:bg-blue-50/50 dark:hover:bg-blue-900/10 cursor-pointer transition-colors ${selectedModelId === m.id ? 'bg-blue-50/80 dark:bg-blue-900/20' : ''}`}
@@ -1432,6 +1544,7 @@ print(response.choices[0].message.content)`;
                                             <td className="font-bold text-xs">{m.name}</td>
                                             <td className="font-mono text-[10px] text-gray-500">{m.id}</td>
                                             <td className="text-[10px] text-gray-400 hidden sm:table-cell">{m.desc}</td>
+                                            <td className="text-[10px] font-mono whitespace-nowrap">{renderPingStatus(m.id)}</td>
                                             <td className="text-center whitespace-nowrap">
                                                 <button
                                                     className="btn btn-ghost btn-xs text-blue-500"

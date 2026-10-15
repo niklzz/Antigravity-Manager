@@ -79,3 +79,40 @@ export async function sendProbe(
         body: text,
     };
 }
+
+export type PingState = 'ok' | 'fail' | 'limited' | 'skipped';
+
+export interface PingResult {
+    state: PingState;
+    status: number;
+    ms: number;
+    message: string;
+}
+
+export async function pingModel(baseUrl: string, apiKey: string, model: string, signal?: AbortSignal): Promise<PingResult> {
+    if (/-image/i.test(model)) return { state: 'skipped', status: 0, ms: 0, message: '' };
+    const start = performance.now();
+    let status = 0;
+    let text = '';
+    try {
+        // No max_tokens: thinking models would otherwise spend the budget and return empty content.
+        const res = await post(baseUrl, apiKey, 'openai', model, {
+            model, messages: [{ role: 'user', content: 'Reply with exactly: pong' }], stream: false,
+        }, signal);
+        status = res.status;
+        text = await res.text();
+    } catch (e) {
+        if (signal?.aborted) throw e;
+        return { state: 'fail', status: 0, ms: Math.round(performance.now() - start), message: e instanceof Error ? e.message : String(e) };
+    }
+    const ms = Math.round(performance.now() - start);
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* not JSON */ }
+    const content = json?.choices?.[0]?.message?.content;
+    if (status >= 200 && status < 300 && typeof content === 'string' && content.trim()) {
+        return { state: 'ok', status, ms, message: '' };
+    }
+    const upstream = json?.error?.message;
+    const message = typeof upstream === 'string' && upstream ? upstream : text.slice(0, 300);
+    return { state: status === 429 ? 'limited' : 'fail', status, ms, message };
+}

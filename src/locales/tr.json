@@ -1423,7 +1423,15 @@
       "account": "Hesap",
       "mapped_model": "Eşlenen",
       "response": "Yanıt",
-      "invalid_json": "Geçersiz JSON, istek gönderilmedi"
+      "invalid_json": "Geçersiz JSON, istek gönderilmedi",
+      "test_all": "Tümünü test et",
+      "tested": "{{done}}/{{total}} test edildi",
+      "status": "Durum",
+      "status_ok": "Tamam",
+      "status_fail": "Başarısız",
+      "status_limited": "Hız sınırı veya kota doldu (model çalışıyor)",
+      "status_skipped": "Atlandı (görsel modeller test edilmez)",
+      "filter_all": "Tümü"
     }
   },
   "monitor": {
