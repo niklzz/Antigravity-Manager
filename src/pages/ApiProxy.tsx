@@ -1093,7 +1093,7 @@ print(response.choices[0].message.content)`;
                     {label}
                     {r.message && <Info size={11} className="opacity-70" />}
                 </span>
-                {rerouted && <span className="block text-[9px] text-gray-400">→ {rerouted}</span>}
+                {rerouted && <span className="block max-w-[7rem] truncate text-[9px] text-gray-400" title={rerouted}>→ {rerouted}</span>}
             </button>
         );
     };
