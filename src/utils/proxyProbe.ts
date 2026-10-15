@@ -109,10 +109,14 @@ export async function pingModel(baseUrl: string, apiKey: string, model: string, 
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* not JSON */ }
     const content = json?.choices?.[0]?.message?.content;
-    if (status >= 200 && status < 300 && typeof content === 'string' && content.trim()) {
+    // Retired models still answer 200 with a "no longer available, switch to …" text, so only the
+    // requested "pong" counts as a working model; any other reply is shown as the failure reason.
+    if (status >= 200 && status < 300 && typeof content === 'string' && /\bpong\b/i.test(content)) {
         return { state: 'ok', status, ms, message: '' };
     }
     const upstream = json?.error?.message;
-    const message = typeof upstream === 'string' && upstream ? upstream : text.slice(0, 300);
+    const message = typeof upstream === 'string' && upstream ? upstream
+        : typeof content === 'string' && content.trim() ? content.trim().slice(0, 300)
+        : text.slice(0, 300);
     return { state: status === 429 ? 'limited' : 'fail', status, ms, message };
 }

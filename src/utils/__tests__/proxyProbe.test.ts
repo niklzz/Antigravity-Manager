@@ -44,6 +44,15 @@ async function main(): Promise<void> {
         assertEqual(r.status, 200);
     });
 
+    await test('200 with a retirement notice instead of pong → fail with that text', async () => {
+        const notice = 'Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash in the latest version of Antigravity.';
+        mockFetch(200, { choices: [{ message: { content: notice } }] });
+        const r = await pingModel(BASE, 'sk', 'gemini-3.5-flash-low');
+        assertEqual(r.state, 'fail');
+        assertEqual(r.status, 200);
+        assertEqual(r.message, notice);
+    });
+
     await test('200 with empty content → fail', async () => {
         mockFetch(200, { choices: [{ message: { content: '' } }] });
         const r = await pingModel(BASE, 'sk', 'gemini-3.8-flash');
