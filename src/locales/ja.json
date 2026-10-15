@@ -1357,6 +1357,20 @@
       },
       "sync_confirm_title": "同期の確認",
       "sync_confirm_message": "{{name}} の設定を同期する準備ができました。⚠️ 注意：これにより、既存のローカル設定ファイル（ログイントークン、APIキーなど）が上書きされます。続行してもよろしいですか？"
+    },
+    "probe": {
+      "title": "リクエストプローブ",
+      "protocol": "プロトコル",
+      "body": "ボディ（JSON、編集可）",
+      "template": "テンプレート",
+      "send": "送信",
+      "stop": "停止",
+      "ttft": "TTFT",
+      "total": "合計",
+      "account": "アカウント",
+      "mapped_model": "マッピング先",
+      "response": "レスポンス",
+      "invalid_json": "JSON が無効なため送信されませんでした"
     }
   },
   "monitor": {

@@ -1410,6 +1410,20 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "İstek Sondası",
+      "protocol": "Protokol",
+      "body": "Gövde (JSON, düzenlenebilir)",
+      "template": "Şablon",
+      "send": "Gönder",
+      "stop": "Durdur",
+      "ttft": "TTFT",
+      "total": "Toplam",
+      "account": "Hesap",
+      "mapped_model": "Eşlenen",
+      "response": "Yanıt",
+      "invalid_json": "Geçersiz JSON, istek gönderilmedi"
     }
   },
   "monitor": {

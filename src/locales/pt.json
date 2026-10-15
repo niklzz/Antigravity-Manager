@@ -1393,6 +1393,20 @@
       "select_models": "Selecione os modelos para adicionar",
       "no_models": "Selecione os modelos na lista acima para adicionar",
       "btn_confirm_sync": "Gravar Configuração"
+    },
+    "probe": {
+      "title": "Sonda de requisição",
+      "protocol": "Protocolo",
+      "body": "Corpo (JSON, editável)",
+      "template": "Modelo",
+      "send": "Enviar",
+      "stop": "Parar",
+      "ttft": "TTFT",
+      "total": "Total",
+      "account": "Conta",
+      "mapped_model": "Mapeado",
+      "response": "Resposta",
+      "invalid_json": "JSON inválido, requisição não enviada"
     }
   },
   "monitor": {

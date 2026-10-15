@@ -1351,6 +1351,20 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "တောင်းဆိုမှု စမ်းသပ်ကိရိယာ",
+      "protocol": "ပရိုတိုကော",
+      "body": "Body (JSON၊ ပြင်ဆင်နိုင်)",
+      "template": "နမူနာပုံစံ",
+      "send": "ပို့ရန်",
+      "stop": "ရပ်ရန်",
+      "ttft": "TTFT",
+      "total": "စုစုပေါင်း",
+      "account": "အကောင့်",
+      "mapped_model": "Mapped",
+      "response": "တုံ့ပြန်မှု",
+      "invalid_json": "JSON မမှန်ကန်ပါ၊ တောင်းဆိုမှု မပို့ပါ"
     }
   },
   "monitor": {

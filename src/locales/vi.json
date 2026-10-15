@@ -1408,6 +1408,20 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "Thăm dò yêu cầu",
+      "protocol": "Giao thức",
+      "body": "Nội dung (JSON, có thể sửa)",
+      "template": "Mẫu",
+      "send": "Gửi",
+      "stop": "Dừng",
+      "ttft": "TTFT",
+      "total": "Tổng",
+      "account": "Tài khoản",
+      "mapped_model": "Ánh xạ",
+      "response": "Phản hồi",
+      "invalid_json": "JSON không hợp lệ, chưa gửi yêu cầu"
     }
   },
   "monitor": {

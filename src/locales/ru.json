@@ -1425,6 +1425,20 @@
         "clear_success": "Конфигурация OpenClaw успешно удалена",
         "clear_error": "Не удалось удалить конфигурацию OpenClaw: {{error}}"
       }
+    },
+    "probe": {
+      "title": "Проба запроса",
+      "protocol": "Протокол",
+      "body": "Тело (JSON, редактируемое)",
+      "template": "Шаблон",
+      "send": "Отправить",
+      "stop": "Стоп",
+      "ttft": "TTFT",
+      "total": "Всего",
+      "account": "Аккаунт",
+      "mapped_model": "Сопоставлено",
+      "response": "Ответ",
+      "invalid_json": "Некорректный JSON, запрос не отправлен"
     }
   },
   "monitor": {

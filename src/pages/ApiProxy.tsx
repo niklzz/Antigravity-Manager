@@ -22,7 +22,8 @@ import {
     Edit2,
     Save,
     Share2,
-    Bot
+    Bot,
+    FlaskConical
 } from 'lucide-react';
 import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
@@ -32,6 +33,7 @@ import { cn } from '../utils/cn';
 import { useProxyModels } from '../hooks/useProxyModels';
 import GroupedSelect, { SelectOption } from '../components/common/GroupedSelect';
 import { CliSyncCard } from '../components/proxy/CliSyncCard';
+import { RequestProbeModal } from '../components/proxy/RequestProbeModal';
 import { listAccounts } from '../services/accountService';
 import CircuitBreaker from '../components/settings/CircuitBreaker';
 import GlobalSystemPrompt from '../components/settings/GlobalSystemPrompt';
@@ -166,6 +168,7 @@ export default function ApiProxy() {
     const [copied, setCopied] = useState<string | null>(null);
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3.8-flash-tiered');
+    const [probeModel, setProbeModel] = useState<string | null>(null);
     const [customMappingValue, setCustomMappingValue] = useState(''); // 自定义映射表单的选中值
     const [editingKey, setEditingKey] = useState<string | null>(null);
     const [editingValue, setEditingValue] = useState<string>('');
@@ -993,6 +996,11 @@ print(response.choices[0].message.content)`;
         return true;
     });
 
+    // In web/headless mode the UI may be opened from another machine, so call the proxy on the page origin.
+    const getProbeBaseUrl = () => isTauri()
+        ? (status.running ? status.base_url : `http://127.0.0.1:${appConfig?.proxy.port || 8045}`)
+        : window.location.origin;
+
     const renderModelRouterSection = () => {
         if (!appConfig) return null;
         return (
@@ -1410,7 +1418,7 @@ print(response.choices[0].message.content)`;
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_id')}</th>
                                         <th className="text-[11px] hidden sm:table-cell font-medium">{t('proxy.supported_models.description')}</th>
-                                        <th className="text-[11px] w-20 text-center font-medium">{t('proxy.supported_models.action')}</th>
+                                        <th className="text-[11px] w-28 text-center font-medium">{t('proxy.supported_models.action')}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1424,7 +1432,17 @@ print(response.choices[0].message.content)`;
                                             <td className="font-bold text-xs">{m.name}</td>
                                             <td className="font-mono text-[10px] text-gray-500">{m.id}</td>
                                             <td className="text-[10px] text-gray-400 hidden sm:table-cell">{m.desc}</td>
-                                            <td className="text-center">
+                                            <td className="text-center whitespace-nowrap">
+                                                <button
+                                                    className="btn btn-ghost btn-xs text-blue-500"
+                                                    title={t('proxy.probe.title')}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setProbeModel(m.id);
+                                                    }}
+                                                >
+                                                    <FlaskConical size={12} />
+                                                </button>
                                                 <button
                                                     className="btn btn-ghost btn-xs text-blue-500"
                                                     onClick={(e) => {
@@ -2598,6 +2616,15 @@ print(response.choices[0].message.content)`;
                         </div>
                     </div>
                 </ModalDialog>
+
+                {probeModel && appConfig && (
+                    <RequestProbeModal
+                        model={probeModel}
+                        baseUrl={getProbeBaseUrl()}
+                        apiKey={appConfig.proxy.api_key}
+                        onClose={() => setProbeModel(null)}
+                    />
+                )}
             </div >
         </div >
     );

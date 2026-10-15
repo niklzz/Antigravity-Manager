@@ -1357,6 +1357,20 @@
       },
       "sync_confirm_title": "동기화 확인",
       "sync_confirm_message": "{{name}} 구성을 동기화할 준비가 되었습니다. ⚠️ 경고: 이 작업은 기존 로컬 구성 파일(예: 로그인 토큰, API 키)을 덮어씁니다. 계속하시겠습니까?"
+    },
+    "probe": {
+      "title": "요청 프로브",
+      "protocol": "프로토콜",
+      "body": "본문 (JSON, 편집 가능)",
+      "template": "템플릿",
+      "send": "전송",
+      "stop": "중지",
+      "ttft": "TTFT",
+      "total": "총 시간",
+      "account": "계정",
+      "mapped_model": "매핑",
+      "response": "응답",
+      "invalid_json": "잘못된 JSON, 요청을 보내지 않았습니다"
     }
   },
   "monitor": {

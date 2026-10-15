@@ -1486,6 +1486,20 @@
       "strategy_memory_desc": "自最新轮次往前回溯计算 Base64 体积，配额内全保留，超出配额的更早旧图自动剔除。",
       "memory_budget_label": "累积内存保鲜上限",
       "memory_budget_hint": "以 Base64 总解码体积为限额。从最新轮次往前回溯，只要累积在限额内的图片完整保留，更早超额旧图剥离降级为占位符。"
+    },
+    "probe": {
+      "title": "请求探针",
+      "protocol": "协议",
+      "body": "请求体（JSON，可编辑）",
+      "template": "模板",
+      "send": "发送",
+      "stop": "停止",
+      "ttft": "首字延迟",
+      "total": "总耗时",
+      "account": "账号",
+      "mapped_model": "映射",
+      "response": "响应",
+      "invalid_json": "JSON 无效，未发送请求"
     }
   },
   "monitor": {

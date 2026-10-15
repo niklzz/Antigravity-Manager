@@ -1492,6 +1492,20 @@
       "strategy_memory_desc": "Scans backward from latest turn by Base64 volume. Retains images within budget, evicts older ones.",
       "memory_budget_label": "Cumulative Memory Freshness Limit",
       "memory_budget_hint": "Sets total decoded Base64 volume budget. Scans backward from latest turn; images within budget are kept, earlier excess images are replaced with placeholders."
+    },
+    "probe": {
+      "title": "Request Probe",
+      "protocol": "Protocol",
+      "body": "Body (JSON, editable)",
+      "template": "Template",
+      "send": "Send",
+      "stop": "Stop",
+      "ttft": "TTFT",
+      "total": "Total",
+      "account": "Account",
+      "mapped_model": "Mapped",
+      "response": "Response",
+      "invalid_json": "Invalid JSON, request not sent"
     }
   },
   "monitor": {
