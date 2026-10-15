@@ -1008,6 +1008,8 @@ print(response.choices[0].message.content)`;
         const r = pingResults[m.id];
         return r && r !== 'running' && r.state === pingFilter;
     });
+    // Description usually repeats the model id; drop the column then to make room for Status.
+    const showModelDesc = filteredModels.some(m => m.desc && m.desc !== m.id);
     const pingCounts = { tested: 0, ok: 0, fail: 0, limited: 0, skipped: 0 };
     for (const m of filteredModels) {
         const r = pingResults[m.id];
@@ -1552,7 +1554,7 @@ print(response.choices[0].message.content)`;
                                         <th className="w-10 pl-3"></th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_id')}</th>
-                                        <th className="text-[11px] hidden sm:table-cell font-medium">{t('proxy.supported_models.description')}</th>
+                                        {showModelDesc && <th className="text-[11px] hidden sm:table-cell font-medium">{t('proxy.supported_models.description')}</th>}
                                         <th className="text-[11px] w-28 font-medium">{t('proxy.probe.status')}</th>
                                         <th className="text-[11px] w-20 text-center font-medium">{t('proxy.supported_models.action')}</th>
                                     </tr>
@@ -1567,7 +1569,7 @@ print(response.choices[0].message.content)`;
                                             <td className="pl-4 text-blue-500">{m.icon}</td>
                                             <td className="font-bold text-xs">{m.name}</td>
                                             <td className="font-mono text-[10px] text-gray-500">{m.id}</td>
-                                            <td className="text-[10px] text-gray-400 hidden sm:table-cell">{m.desc}</td>
+                                            {showModelDesc && <td className="text-[10px] text-gray-400 hidden sm:table-cell">{m.desc}</td>}
                                             <td className="text-[10px] font-mono whitespace-nowrap">{renderPingStatus(m.id)}</td>
                                             <td className="text-center whitespace-nowrap">
                                                 <button
