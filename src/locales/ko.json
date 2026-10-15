@@ -1378,7 +1378,13 @@
       "status_fail": "실패",
       "status_limited": "속도 제한 또는 할당량 초과 (모델 사용 가능)",
       "status_skipped": "건너뜀 (이미지 모델은 테스트하지 않음)",
-      "filter_all": "전체"
+      "filter_all": "전체",
+      "check": "확인",
+      "verdict_ok": "작동함",
+      "verdict_fail": "작동 안 함",
+      "verdict_limited": "요청 한도 초과",
+      "served_by": "{{requested}} 요청 → {{served}} 응답",
+      "details": "클릭하여 요청 세부 정보 보기"
     }
   },
   "monitor": {

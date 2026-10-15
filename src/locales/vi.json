@@ -1429,7 +1429,13 @@
       "status_fail": "Thất bại",
       "status_limited": "Bị giới hạn tốc độ hoặc hết hạn mức (mô hình vẫn hoạt động)",
       "status_skipped": "Bỏ qua (không kiểm tra mô hình hình ảnh)",
-      "filter_all": "Tất cả"
+      "filter_all": "Tất cả",
+      "check": "Kiểm tra",
+      "verdict_ok": "Hoạt động",
+      "verdict_fail": "Không hoạt động",
+      "verdict_limited": "Giới hạn yêu cầu",
+      "served_by": "Yêu cầu {{requested}} → {{served}} trả lời",
+      "details": "Nhấp để xem chi tiết yêu cầu"
     }
   },
   "monitor": {

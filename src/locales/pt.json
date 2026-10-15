@@ -1414,7 +1414,13 @@
       "status_fail": "Falhou",
       "status_limited": "Limite de taxa ou cota esgotada (o modelo funciona)",
       "status_skipped": "Ignorado (modelos de imagem não são testados)",
-      "filter_all": "Todos"
+      "filter_all": "Todos",
+      "check": "Verificar",
+      "verdict_ok": "Funciona",
+      "verdict_fail": "Não funciona",
+      "verdict_limited": "Limite de requisições",
+      "served_by": "Solicitado {{requested}} → respondeu {{served}}",
+      "details": "Clique para ver os detalhes da requisição"
     }
   },
   "monitor": {

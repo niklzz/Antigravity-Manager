@@ -23,7 +23,6 @@ import {
     Save,
     Share2,
     Bot,
-    FlaskConical,
     Play,
     Square,
     Info
@@ -172,7 +171,7 @@ export default function ApiProxy() {
     const [copied, setCopied] = useState<string | null>(null);
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3.8-flash-tiered');
-    const [probeModel, setProbeModel] = useState<string | null>(null);
+    const [probeModel, setProbeModel] = useState<{ id: string; autoSend: boolean } | null>(null);
     const [pingResults, setPingResults] = useState<Record<string, PingResult | 'running'>>({});
     const [pingFilter, setPingFilter] = useState<'all' | 'ok' | 'fail' | 'limited'>('all');
     const [pinging, setPinging] = useState(false);
@@ -1024,6 +1023,21 @@ print(response.choices[0].message.content)`;
 
     useEffect(() => () => pingAbortRef.current?.abort(), []);
 
+    const checkModel = async (modelId: string, baseUrl: string, apiKey: string, signal?: AbortSignal) => {
+        setPingResults(prev => ({ ...prev, [modelId]: 'running' }));
+        try {
+            const result = await pingModel(baseUrl, apiKey, modelId, signal);
+            setPingResults(prev => ({ ...prev, [modelId]: result }));
+        } catch {
+            // Aborted: drop the spinner and leave the row untested.
+            setPingResults(prev => {
+                const next = { ...prev };
+                delete next[modelId];
+                return next;
+            });
+        }
+    };
+
     const runTestAll = async () => {
         if (!appConfig || pinging) return;
         const controller = new AbortController();
@@ -1034,19 +1048,7 @@ print(response.choices[0].message.content)`;
         const apiKey = appConfig.proxy.api_key;
         const worker = async () => {
             for (let id = queue.shift(); id && !controller.signal.aborted; id = queue.shift()) {
-                const modelId = id;
-                setPingResults(prev => ({ ...prev, [modelId]: 'running' }));
-                try {
-                    const result = await pingModel(baseUrl, apiKey, modelId, controller.signal);
-                    setPingResults(prev => ({ ...prev, [modelId]: result }));
-                } catch {
-                    // Aborted: drop the spinner and leave the row untested.
-                    setPingResults(prev => {
-                        const next = { ...prev };
-                        delete next[modelId];
-                        return next;
-                    });
-                }
+                await checkModel(id, baseUrl, apiKey, controller.signal);
             }
         };
         await Promise.all(Array.from({ length: 3 }, worker));
@@ -1054,23 +1056,45 @@ print(response.choices[0].message.content)`;
         setPinging(false);
     };
 
+    // Status cell: "Check" button until tested, then the verdict; clicking a verdict opens the probe.
     const renderPingStatus = (modelId: string) => {
         const r = pingResults[modelId];
-        if (!r) return null;
         if (r === 'running') return <span className="loading loading-spinner loading-xs text-gray-400" />;
-        if (r.state === 'skipped') return <span className="text-gray-400" title={t('proxy.probe.status_skipped')}>–</span>;
-        if (r.state === 'ok') {
-            return <span className="text-green-600 dark:text-green-400" title={t('proxy.probe.status_ok')}>✓ {(r.ms / 1000).toFixed(1)}s</span>;
+        if (!r) {
+            return (
+                <button
+                    type="button"
+                    className="btn btn-xs btn-outline btn-primary gap-1 font-sans"
+                    disabled={!appConfig}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (appConfig) void checkModel(modelId, getProbeBaseUrl(), appConfig.proxy.api_key);
+                    }}
+                >
+                    <Play size={10} /> {t('proxy.probe.check')}
+                </button>
+            );
         }
-        const limited = r.state === 'limited';
+        if (r.state === 'skipped') return <span className="text-gray-400" title={t('proxy.probe.status_skipped')}>–</span>;
+        const color = r.state === 'ok' ? 'text-green-600 dark:text-green-400' : r.state === 'limited' ? 'text-amber-500' : 'text-red-500';
+        const label = r.state === 'ok' ? `✓ ${(r.ms / 1000).toFixed(1)}s` : `${r.state === 'limited' ? '⚠' : '✗'} ${r.status || 'ERR'}`;
+        const rerouted = r.state !== 'ok' && r.servedModel && r.servedModel !== modelId ? r.servedModel : null;
         return (
-            <span
-                className={cn('inline-flex items-center gap-1', limited ? 'text-amber-500' : 'text-red-500')}
-                title={`${t(limited ? 'proxy.probe.status_limited' : 'proxy.probe.status_fail')}${r.message ? `\n${r.message}` : ''}`}
+            <button
+                type="button"
+                className={cn('text-left hover:underline', color)}
+                title={`${t(`proxy.probe.status_${r.state}`)}${r.message ? `\n${r.message}` : ''}\n${t('proxy.probe.details')}`}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    setProbeModel({ id: modelId, autoSend: true });
+                }}
             >
-                {limited ? '⚠' : '✗'} {r.status || 'ERR'}
-                {r.message && <Info size={11} className="opacity-70" />}
-            </span>
+                <span className="inline-flex items-center gap-1">
+                    {label}
+                    {r.message && <Info size={11} className="opacity-70" />}
+                </span>
+                {rerouted && <span className="block text-[9px] text-gray-400">→ {rerouted}</span>}
+            </button>
         );
     };
 
@@ -1529,8 +1553,8 @@ print(response.choices[0].message.content)`;
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_id')}</th>
                                         <th className="text-[11px] hidden sm:table-cell font-medium">{t('proxy.supported_models.description')}</th>
-                                        <th className="text-[11px] w-20 font-medium">{t('proxy.probe.status')}</th>
-                                        <th className="text-[11px] w-28 text-center font-medium">{t('proxy.supported_models.action')}</th>
+                                        <th className="text-[11px] w-28 font-medium">{t('proxy.probe.status')}</th>
+                                        <th className="text-[11px] w-20 text-center font-medium">{t('proxy.supported_models.action')}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1546,16 +1570,6 @@ print(response.choices[0].message.content)`;
                                             <td className="text-[10px] text-gray-400 hidden sm:table-cell">{m.desc}</td>
                                             <td className="text-[10px] font-mono whitespace-nowrap">{renderPingStatus(m.id)}</td>
                                             <td className="text-center whitespace-nowrap">
-                                                <button
-                                                    className="btn btn-ghost btn-xs text-blue-500"
-                                                    title={t('proxy.probe.title')}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setProbeModel(m.id);
-                                                    }}
-                                                >
-                                                    <FlaskConical size={12} />
-                                                </button>
                                                 <button
                                                     className="btn btn-ghost btn-xs text-blue-500"
                                                     onClick={(e) => {
@@ -2732,7 +2746,9 @@ print(response.choices[0].message.content)`;
 
                 {probeModel && appConfig && (
                     <RequestProbeModal
-                        model={probeModel}
+                        key={probeModel.id}
+                        model={probeModel.id}
+                        autoSend={probeModel.autoSend}
                         baseUrl={getProbeBaseUrl()}
                         apiKey={appConfig.proxy.api_key}
                         onClose={() => setProbeModel(null)}

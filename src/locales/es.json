@@ -1378,7 +1378,13 @@
       "status_fail": "Fallido",
       "status_limited": "Límite de tasa o cuota agotada (el modelo funciona)",
       "status_skipped": "Omitido (los modelos de imagen no se prueban)",
-      "filter_all": "Todos"
+      "filter_all": "Todos",
+      "check": "Comprobar",
+      "verdict_ok": "Funciona",
+      "verdict_fail": "No funciona",
+      "verdict_limited": "Límite de solicitudes",
+      "served_by": "Solicitado {{requested}} → respondió {{served}}",
+      "details": "Haz clic para ver los detalles de la solicitud"
     }
   },
   "monitor": {

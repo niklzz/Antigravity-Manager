@@ -2,7 +2,7 @@
  * pingModel must classify upstream replies into ok / fail / limited / skipped.
  * Run: npx tsx src/utils/__tests__/proxyProbe.test.ts
  */
-import { pingModel, sendProbe, ProbeInputError } from '../proxyProbe';
+import { classifyReply, pingModel, sendProbe, ProbeInputError } from '../proxyProbe';
 
 let passed = 0;
 let failed = 0;
@@ -99,6 +99,22 @@ async function main(): Promise<void> {
         }
         assertEqual(error instanceof ProbeInputError, true);
         assertEqual(fetchCalls, 0);
+    });
+
+    await test('pingModel reports the model that actually answered', async () => {
+        mockFetch(200, { model: 'gemini-3.5-flash-low', choices: [{ message: { content: 'no longer available' } }] });
+        const r = await pingModel(BASE, 'sk', 'gemini-3-flash');
+        assertEqual(r.state, 'fail');
+        assertEqual(r.servedModel, 'gemini-3.5-flash-low');
+    });
+
+    await test('classifyReply: Anthropic and Gemini replies with pong → ok', async () => {
+        assertEqual(classifyReply('anthropic', 200, JSON.stringify({ content: [{ type: 'text', text: 'pong' }] }))?.state, 'ok');
+        assertEqual(classifyReply('gemini', 200, JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Pong.' }] } }] }))?.state, 'ok');
+    });
+
+    await test('classifyReply: raw SSE body has no verdict', async () => {
+        assertEqual(classifyReply('openai', 200, 'data: {"choices":[]}\n\ndata: [DONE]\n'), null);
     });
 
     console.log(`\n${passed} passed, ${failed} failed`);

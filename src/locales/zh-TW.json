@@ -1531,7 +1531,13 @@
       "status_fail": "失敗",
       "status_limited": "限流或配額耗盡（模型可用）",
       "status_skipped": "已略過（圖像模型不參與測試）",
-      "filter_all": "全部"
+      "filter_all": "全部",
+      "check": "檢測",
+      "verdict_ok": "可用",
+      "verdict_fail": "不可用",
+      "verdict_limited": "觸發限流",
+      "served_by": "請求 {{requested}} → 實際回應 {{served}}",
+      "details": "點擊查看請求詳情"
     }
   },
   "monitor": {

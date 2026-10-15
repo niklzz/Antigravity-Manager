@@ -1431,7 +1431,13 @@
       "status_fail": "Başarısız",
       "status_limited": "Hız sınırı veya kota doldu (model çalışıyor)",
       "status_skipped": "Atlandı (görsel modeller test edilmez)",
-      "filter_all": "Tümü"
+      "filter_all": "Tümü",
+      "check": "Kontrol et",
+      "verdict_ok": "Çalışıyor",
+      "verdict_fail": "Çalışmıyor",
+      "verdict_limited": "İstek sınırı",
+      "served_by": "{{requested}} istendi → {{served}} yanıtladı",
+      "details": "İstek ayrıntıları için tıklayın"
     }
   },
   "monitor": {

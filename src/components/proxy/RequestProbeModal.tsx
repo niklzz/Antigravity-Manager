@@ -4,12 +4,14 @@ import { FlaskConical, Play, RotateCcw, Square, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { copyToClipboard } from '../../utils/clipboard';
 import { showToast } from '../common/ToastContainer';
-import { PROBE_PROTOCOLS, ProbeInputError, sendProbe, type ProbeProtocol, type ProbeResult } from '../../utils/proxyProbe';
+import { PROBE_PROTOCOLS, ProbeInputError, classifyReply, sendProbe, type ProbeProtocol, type ProbeResult } from '../../utils/proxyProbe';
 
 interface RequestProbeModalProps {
     model: string;
     baseUrl: string;
     apiKey: string;
+    /** Send the template right away (opened from a status cell). */
+    autoSend?: boolean;
     onClose: () => void;
 }
 
@@ -25,7 +27,7 @@ function prettyBody(body: string): string {
     }
 }
 
-export function RequestProbeModal({ model, baseUrl, apiKey, onClose }: RequestProbeModalProps) {
+export function RequestProbeModal({ model, baseUrl, apiKey, autoSend, onClose }: RequestProbeModalProps) {
     const { t } = useTranslation();
     const [protocol, setProtocol] = useState<ProbeProtocol>('openai');
     const [bodyText, setBodyText] = useState(() => templateText('openai', model));
@@ -62,6 +64,11 @@ export function RequestProbeModal({ model, baseUrl, apiKey, onClose }: RequestPr
     const status = result?.status ?? 0;
     const badgeClass = status >= 200 && status < 300 ? 'badge-success' : status === 429 ? 'badge-warning' : 'badge-error';
     const responseText = result ? prettyBody(result.body) : '';
+    const verdict = result ? classifyReply(protocol, result.status, result.body) : null;
+    const servedModel = verdict?.servedModel ?? result?.mappedModel ?? null;
+
+    // Mount-only: autoSend is fixed for the modal's lifetime.
+    useEffect(() => { if (autoSend) void send(); }, []);
 
     return (
         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
@@ -134,6 +141,22 @@ export function RequestProbeModal({ model, baseUrl, apiKey, onClose }: RequestPr
                     {error && <div className="text-xs text-red-500 break-all">{error}</div>}
                     {result && (
                         <>
+                            {verdict && (
+                                <div className={cn(
+                                    'p-3 rounded-lg border text-xs space-y-1',
+                                    verdict.state === 'ok' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300'
+                                        : verdict.state === 'limited' ? 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300'
+                                            : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300',
+                                )}>
+                                    <div className="font-bold text-sm">
+                                        {verdict.state === 'ok' ? '✓' : verdict.state === 'limited' ? '⚠' : '✗'} {t(`proxy.probe.verdict_${verdict.state}`)}
+                                    </div>
+                                    {servedModel && servedModel !== model && (
+                                        <div className="font-mono">{t('proxy.probe.served_by', { requested: model, served: servedModel })}</div>
+                                    )}
+                                    {verdict.message && <div className="break-words">«{verdict.message}»</div>}
+                                </div>
+                            )}
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
                                 <span className={cn('badge badge-sm font-mono', badgeClass)}>{result.status}</span>
                                 <span>{t('proxy.probe.ttft')} {result.ttftMs ?? '—'} ms</span>

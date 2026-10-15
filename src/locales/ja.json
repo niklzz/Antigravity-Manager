@@ -1378,7 +1378,13 @@
       "status_fail": "失敗",
       "status_limited": "レート制限またはクォータ超過（モデルは利用可能）",
       "status_skipped": "スキップ（画像モデルは対象外）",
-      "filter_all": "すべて"
+      "filter_all": "すべて",
+      "check": "確認",
+      "verdict_ok": "利用可能",
+      "verdict_fail": "利用不可",
+      "verdict_limited": "レート制限",
+      "served_by": "{{requested}} をリクエスト → {{served}} が応答",
+      "details": "クリックしてリクエストの詳細を表示"
     }
   },
   "monitor": {

@@ -1381,7 +1381,13 @@
       "status_fail": "فشل",
       "status_limited": "تجاوز حد المعدل أو الحصة (النموذج يعمل)",
       "status_skipped": "تم التخطي (لا تُختبر نماذج الصور)",
-      "filter_all": "الكل"
+      "filter_all": "الكل",
+      "check": "فحص",
+      "verdict_ok": "يعمل",
+      "verdict_fail": "لا يعمل",
+      "verdict_limited": "تجاوز حد الطلبات",
+      "served_by": "المطلوب {{requested}} ← أجاب {{served}}",
+      "details": "انقر لعرض تفاصيل الطلب"
     }
   },
   "monitor": {
