@@ -1384,7 +1384,8 @@
       "verdict_fail": "利用不可",
       "verdict_limited": "レート制限",
       "served_by": "{{requested}} をリクエスト → {{served}} が応答",
-      "details": "クリックしてリクエストの詳細を表示"
+      "details": "クリックしてリクエストの詳細を表示",
+      "headers": "レスポンスヘッダー"
     }
   },
   "monitor": {

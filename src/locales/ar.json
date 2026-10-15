@@ -1387,7 +1387,8 @@
       "verdict_fail": "لا يعمل",
       "verdict_limited": "تجاوز حد الطلبات",
       "served_by": "المطلوب {{requested}} ← أجاب {{served}}",
-      "details": "انقر لعرض تفاصيل الطلب"
+      "details": "انقر لعرض تفاصيل الطلب",
+      "headers": "ترويسات الاستجابة"
     }
   },
   "monitor": {

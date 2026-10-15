@@ -33,6 +33,7 @@ export interface ProbeResult {
     totalMs: number;
     account: string | null;
     mappedModel: string | null;
+    headers: [string, string][];
     body: string;
 }
 
@@ -79,6 +80,7 @@ export async function sendProbe(
         totalMs: Math.round(performance.now() - start),
         account: res.headers.get('X-Account-Email'),
         mappedModel: res.headers.get('X-Mapped-Model'),
+        headers: [...res.headers.entries()],
         body: text,
     };
 }

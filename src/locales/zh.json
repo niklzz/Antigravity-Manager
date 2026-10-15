@@ -1513,7 +1513,8 @@
       "verdict_fail": "不可用",
       "verdict_limited": "触发限流",
       "served_by": "请求 {{requested}} → 实际响应 {{served}}",
-      "details": "点击查看请求详情"
+      "details": "点击查看请求详情",
+      "headers": "响应头"
     }
   },
   "monitor": {

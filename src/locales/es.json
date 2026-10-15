@@ -1384,7 +1384,8 @@
       "verdict_fail": "No funciona",
       "verdict_limited": "Límite de solicitudes",
       "served_by": "Solicitado {{requested}} → respondió {{served}}",
-      "details": "Haz clic para ver los detalles de la solicitud"
+      "details": "Haz clic para ver los detalles de la solicitud",
+      "headers": "Encabezados de respuesta"
     }
   },
   "monitor": {

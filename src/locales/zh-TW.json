@@ -1537,7 +1537,8 @@
       "verdict_fail": "不可用",
       "verdict_limited": "觸發限流",
       "served_by": "請求 {{requested}} → 實際回應 {{served}}",
-      "details": "點擊查看請求詳情"
+      "details": "點擊查看請求詳情",
+      "headers": "回應標頭"
     }
   },
   "monitor": {

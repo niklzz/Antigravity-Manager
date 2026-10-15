@@ -1384,7 +1384,8 @@
       "verdict_fail": "작동 안 함",
       "verdict_limited": "요청 한도 초과",
       "served_by": "{{requested}} 요청 → {{served}} 응답",
-      "details": "클릭하여 요청 세부 정보 보기"
+      "details": "클릭하여 요청 세부 정보 보기",
+      "headers": "응답 헤더"
     }
   },
   "monitor": {

@@ -1420,7 +1420,8 @@
       "verdict_fail": "Não funciona",
       "verdict_limited": "Limite de requisições",
       "served_by": "Solicitado {{requested}} → respondeu {{served}}",
-      "details": "Clique para ver os detalhes da requisição"
+      "details": "Clique para ver os detalhes da requisição",
+      "headers": "Cabeçalhos da resposta"
     }
   },
   "monitor": {

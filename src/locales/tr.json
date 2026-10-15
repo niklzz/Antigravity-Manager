@@ -1437,7 +1437,8 @@
       "verdict_fail": "Çalışmıyor",
       "verdict_limited": "İstek sınırı",
       "served_by": "{{requested}} istendi → {{served}} yanıtladı",
-      "details": "İstek ayrıntıları için tıklayın"
+      "details": "İstek ayrıntıları için tıklayın",
+      "headers": "Yanıt başlıkları"
     }
   },
   "monitor": {

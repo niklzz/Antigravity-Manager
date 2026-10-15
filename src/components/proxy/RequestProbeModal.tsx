@@ -163,6 +163,18 @@ export function RequestProbeModal({ model, baseUrl, apiKey, initialResult, onClo
                                 <span>{t('proxy.probe.account')} <span className="font-mono">{result.account ?? '—'}</span></span>
                                 <span>{t('proxy.probe.mapped_model')} <span className="font-mono">{result.mappedModel ?? '—'}</span></span>
                             </div>
+                            {result.headers.length > 0 && (
+                                <details className="text-[11px]">
+                                    <summary className="cursor-pointer text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                        {t('proxy.probe.headers')} ({result.headers.length})
+                                    </summary>
+                                    <div className="mt-1 p-2 bg-gray-50 dark:bg-base-200 rounded-lg font-mono break-all space-y-0.5">
+                                        {result.headers.map(([name, value]) => (
+                                            <div key={name}><span className="text-gray-500">{name}:</span> {value}</div>
+                                        ))}
+                                    </div>
+                                </details>
+                            )}
                             <div className="flex items-center justify-between">
                                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('proxy.probe.response')}</span>
                                 <button
