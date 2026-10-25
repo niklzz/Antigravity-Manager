@@ -1698,6 +1698,96 @@ pub fn validate_and_sanitize_inline_data(
     Some((final_mime, clean_b64.to_string()))
 }
 
+/// An image from a Gemini response part, ready to render into a client protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImage {
+    pub mime_type: String,
+    pub data: String,
+}
+
+impl InlineImage {
+    /// Markdown form every text-based client protocol uses for generated images.
+    pub fn to_markdown(&self) -> String {
+        format!("![image](data:{};base64,{})", self.mime_type, self.data)
+    }
+}
+
+/// Picks which images of a Gemini response reach the client.
+///
+/// Gemini 3 image models also return their interim drafts while reasoning, as image parts flagged
+/// `thought: true`; the last draft is usually the final image itself, so rendering drafts shows the
+/// result twice. Only non-thought images are passed through. The latest draft is held back and
+/// released by `finish()` when the reply ends without a final image, so a reply never loses its
+/// only picture.
+#[derive(Debug, Default)]
+pub struct OutputImageFilter {
+    held_draft: Option<InlineImage>,
+    emitted_final: bool,
+}
+
+impl OutputImageFilter {
+    /// The image to output now, or None for an empty payload or a (held) draft.
+    pub fn accept(&mut self, mime_type: &str, data: &str, is_thought: bool) -> Option<InlineImage> {
+        if data.is_empty() {
+            return None;
+        }
+        let image = InlineImage {
+            mime_type: mime_type.to_string(),
+            data: data.to_string(),
+        };
+        if is_thought {
+            tracing::debug!(
+                "[Image-Output] Holding interim draft image back (mime: {}, len: {})",
+                mime_type,
+                data.len()
+            );
+            self.held_draft = Some(image);
+            return None;
+        }
+        self.emitted_final = true;
+        self.held_draft = None;
+        Some(image)
+    }
+
+    /// `accept` for an untyped Gemini part; None when the part carries no image.
+    pub fn accept_part(&mut self, part: &Value) -> Option<InlineImage> {
+        let img = part.get("inlineData").or_else(|| part.get("inline_data"))?;
+        let mime_type = img
+            .get("mimeType")
+            .or_else(|| img.get("mime_type"))
+            .and_then(Value::as_str)
+            .unwrap_or("image/png");
+        let data = img.get("data").and_then(Value::as_str).unwrap_or("");
+        let is_thought = part
+            .get("thought")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.accept(mime_type, data, is_thought)
+    }
+
+    /// The held draft when the reply ended without a final image.
+    pub fn finish(&mut self) -> Option<InlineImage> {
+        if self.emitted_final {
+            return None;
+        }
+        let draft = self.held_draft.take();
+        if draft.is_some() {
+            tracing::info!(
+                "[Image-Output] Reply ended without a final image, using the last draft"
+            );
+        }
+        draft
+    }
+}
+
+/// Images of one complete set of Gemini response parts, after `OutputImageFilter`.
+pub fn select_output_images(parts: &[Value]) -> Vec<InlineImage> {
+    let mut filter = OutputImageFilter::default();
+    let mut images: Vec<InlineImage> = parts.iter().filter_map(|p| filter.accept_part(p)).collect();
+    images.extend(filter.finish());
+    images
+}
+
 /// Helper to create a Gemini inlineData part or fallback text if invalid
 pub fn create_gemini_inline_part(
     mime_type: Option<&str>,
@@ -2138,6 +2228,38 @@ pub fn safe_truncate_chars(s: &str, max_chars: usize) -> &str {
 #[cfg(test)]
 mod defense_tests {
     use super::*;
+
+    #[test]
+    fn test_output_images_skip_drafts_and_fall_back_to_the_last_one() {
+        let draft = |data: &str| json!({ "inlineData": { "mimeType": "image/png", "data": data }, "thought": true });
+        let final_image = json!({ "inlineData": { "mimeType": "image/jpeg", "data": "RklOQUw=" } });
+        let text = json!({ "text": "Here you go" });
+
+        // Drafts are dropped once a final image arrives, whatever the order.
+        let shown = select_output_images(&[
+            draft("RDE="),
+            text.clone(),
+            final_image.clone(),
+            draft("RDI="),
+        ]);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].mime_type, "image/jpeg");
+        assert_eq!(
+            shown[0].to_markdown(),
+            "![image](data:image/jpeg;base64,RklOQUw=)"
+        );
+
+        // No final image: the last draft is shown instead of nothing.
+        let shown = select_output_images(&[draft("RDE="), draft("RDI="), text]);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].data, "RDI=");
+
+        // Empty payloads are ignored.
+        assert!(select_output_images(&[
+            json!({ "inlineData": { "mimeType": "image/png", "data": "" } })
+        ])
+        .is_empty());
+    }
 
     #[test]
     fn test_ensure_gemini_payload_ends_with_user_empty() {

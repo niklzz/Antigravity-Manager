@@ -31,6 +31,7 @@ pub struct NonStreamingProcessor {
     pub message_count: usize, // [NEW v4.0.0] Message count for rewind detection
     // [FIX #3379] Registered tool names for call:default_api leakage detection
     pub registered_tool_names: Vec<String>,
+    output_images: crate::proxy::mappers::common_utils::OutputImageFilter,
 }
 
 impl NonStreamingProcessor {
@@ -48,6 +49,7 @@ impl NonStreamingProcessor {
             model_name,
             message_count,
             registered_tool_names: Vec::new(),
+            output_images: Default::default(),
         }
     }
 
@@ -78,6 +80,11 @@ impl NonStreamingProcessor {
         // 处理所有 parts
         for part in parts {
             self.process_part(part);
+        }
+        if let Some(image) = self.output_images.finish() {
+            self.flush_thinking();
+            self.text_builder.push_str(&image.to_markdown());
+            self.flush_text();
         }
 
         // 处理 grounding(web search) -> 转换为 server_tool_use / web_search_tool_result
@@ -239,13 +246,12 @@ impl NonStreamingProcessor {
 
         // 3. InlineData (Image) 处理
         if let Some(img) = &part.inline_data {
-            self.flush_thinking();
-
-            let mime_type = &img.mime_type;
-            let data = &img.data;
-            if !data.is_empty() {
-                let markdown_img = format!("![image](data:{};base64,{})", mime_type, data);
-                self.text_builder.push_str(&markdown_img);
+            if let Some(image) =
+                self.output_images
+                    .accept(&img.mime_type, &img.data, part.thought.unwrap_or(false))
+            {
+                self.flush_thinking();
+                self.text_builder.push_str(&image.to_markdown());
                 self.flush_text();
             }
         }

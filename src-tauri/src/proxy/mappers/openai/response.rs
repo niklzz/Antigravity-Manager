@@ -73,6 +73,8 @@ pub fn transform_openai_response(
                 .and_then(|c| c.get("parts"))
                 .and_then(|p| p.as_array())
             {
+                let mut output_images =
+                    crate::proxy::mappers::common_utils::OutputImageFilter::default();
                 for part in parts {
                     // 捕获 thoughtSignature (Gemini 3 工具调用必需)
                     if let Some(sig) = part
@@ -149,16 +151,8 @@ pub fn transform_openai_response(
                     }
 
                     // 图片处理 (响应中直接返回图片的情况)
-                    if let Some(img) = part.get("inlineData") {
-                        let mime_type = img
-                            .get("mimeType")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("image/png");
-                        let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                        if !data.is_empty() {
-                            content_out
-                                .push_str(&format!("![image](data:{};base64,{})", mime_type, data));
-                        }
+                    if let Some(image) = output_images.accept_part(part) {
+                        content_out.push_str(&image.to_markdown());
                     }
 
                     // 处理原生代码执行 (executableCode)
@@ -190,6 +184,9 @@ pub fn transform_openai_response(
                             ));
                         }
                     }
+                }
+                if let Some(image) = output_images.finish() {
+                    content_out.push_str(&image.to_markdown());
                 }
                 if let Some(sid) = session_id {
                     crate::proxy::thinking_store::capture_gemini_parts(sid, parts);
@@ -393,6 +390,25 @@ mod tests {
         };
         assert_eq!(content, "Hello!");
         assert_eq!(result.choices[0].finish_reason, Some("stop".to_string()));
+    }
+
+    #[test]
+    fn test_transform_openai_response_skips_thought_draft_image() {
+        let gemini_resp = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "inlineData": { "mimeType": "image/png", "data": "RFJBRlQ=" }, "thought": true },
+                    { "inlineData": { "mimeType": "image/png", "data": "RklOQUw=" } }
+                ] },
+                "finishReason": "STOP"
+            }]
+        });
+        let result = transform_openai_response(&gemini_resp, None, 1, None);
+        let content = match result.choices[0].message.content.as_ref().unwrap() {
+            OpenAIContent::String(s) => s,
+            _ => panic!("Expected string content"),
+        };
+        assert_eq!(content, "![image](data:image/png;base64,RklOQUw=)");
     }
 
     #[test]

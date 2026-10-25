@@ -93,6 +93,7 @@ pub struct OpenAIChatStreamHandler {
     pub has_thinking: bool,
     pub is_thinking_active: bool,
     pub has_emitted_finish_reason: bool,
+    pub output_images: crate::proxy::mappers::common_utils::OutputImageFilter,
 }
 
 impl ProtocolStreamHandler for OpenAIChatStreamHandler {
@@ -154,18 +155,8 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
                             {
                                 store_thought_signature(sig, &self.session_id, self.message_count);
                             }
-                            if let Some(img) = part.get("inlineData") {
-                                let mime_type = img
-                                    .get("mimeType")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("image/png");
-                                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                if !data.is_empty() {
-                                    content_out.push_str(&format!(
-                                        "![image](data:{};base64,{})",
-                                        mime_type, data
-                                    ));
-                                }
+                            if let Some(image) = self.output_images.accept_part(part) {
+                                content_out.push_str(&image.to_markdown());
                             }
                             if let Some(func_call) = part.get("functionCall") {
                                 let call_key = serde_json::to_string(func_call).unwrap_or_default();
@@ -313,6 +304,12 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
                             gemini_finish_reason
                         };
 
+                    if finish_reason.is_some() {
+                        if let Some(image) = self.output_images.finish() {
+                            content_out.push_str(&image.to_markdown());
+                        }
+                    }
+
                     if !thought_out.is_empty() {
                         self.has_thinking = true;
                         self.is_thinking_active = true;
@@ -401,6 +398,26 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
         let mut chunks = Vec::new();
+
+        // The upstream closed without a finishReason while a draft image was still held back.
+        if let Some(image) = self.output_images.finish() {
+            self.has_content = true;
+            let image_chunk = json!({
+                "id": &self.stream_id,
+                "object": "chat.completion.chunk",
+                "created": self.created_ts,
+                "model": &self.model,
+                "choices": [{
+                    "index": 0,
+                    "delta": { "content": image.to_markdown() },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            });
+            chunks.push(Bytes::from(format!(
+                "data: {}\n\n",
+                serde_json::to_string(&image_chunk).unwrap_or_default()
+            )));
+        }
 
         // [收尾保底防御 Fixes #3716]
         // 若流已产生正文或工具调用，但上游在未显式下发 finishReason 的情况下关闭了连接 (EOF) 或仅下发了 usageMetadata：
@@ -520,6 +537,7 @@ where
         has_thinking: false,
         is_thinking_active: false,
         has_emitted_finish_reason: false,
+        output_images: Default::default(),
     };
 
     let config =
@@ -2086,6 +2104,71 @@ mod tests {
         }
         assert!(found_usage, "Usage should be found in the last chunk");
         assert!(found_finish, "Finish reason should be strictly 'stop'");
+    }
+
+    async fn collect_stream_content(chunks: Vec<Value>) -> String {
+        let items: Vec<Result<Bytes, reqwest::Error>> = chunks
+            .into_iter()
+            .map(|c| Ok(Bytes::from(format!("data: {}\n\n", c))))
+            .collect();
+        let mut openai_stream = create_openai_sse_stream(
+            Box::pin(stream::iter(items)),
+            "gemini-3.1-flash-image".to_string(),
+            "test-session".to_string(),
+            0,
+            None,
+            false,
+        );
+        let mut content = String::new();
+        while let Some(Ok(bytes)) = openai_stream.next().await {
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                let Some(payload) = line.strip_prefix("data: ") else {
+                    continue;
+                };
+                if let Ok(chunk) = serde_json::from_str::<Value>(payload) {
+                    if let Some(text) = chunk["choices"][0]["delta"]["content"].as_str() {
+                        content.push_str(text);
+                    }
+                }
+            }
+        }
+        content
+    }
+
+    #[tokio::test]
+    async fn test_openai_streaming_skips_thought_draft_image() {
+        let draft = json!({ "candidates": [{ "content": { "parts": [
+            { "text": "Composing", "thought": true },
+            { "inlineData": { "mimeType": "image/png", "data": "RFJBRlQ=" }, "thought": true }
+        ] } }] });
+        let final_image = json!({ "candidates": [{ "finishReason": "STOP", "content": { "parts": [
+            { "inlineData": { "mimeType": "image/png", "data": "RklOQUw=" } }
+        ] } }] });
+        let content = collect_stream_content(vec![draft, final_image]).await;
+        assert_eq!(content, "![image](data:image/png;base64,RklOQUw=)");
+    }
+
+    #[tokio::test]
+    async fn test_openai_streaming_falls_back_to_draft_without_final_image() {
+        let draft = json!({ "candidates": [{ "content": { "parts": [
+            { "inlineData": { "mimeType": "image/png", "data": "RFJBRlQ=" }, "thought": true }
+        ] } }] });
+        let finish =
+            json!({ "candidates": [{ "finishReason": "STOP", "content": { "parts": [] } }] });
+        let content = collect_stream_content(vec![draft.clone(), finish]).await;
+        assert_eq!(content, "![image](data:image/png;base64,RFJBRlQ=)");
+
+        // Upstream closed without a finishReason after some text: the draft is flushed on finalize.
+        // (A draft with nothing else is a truncated stream, which the lifecycle reports as an error.)
+        let text_and_draft = json!({ "candidates": [{ "content": { "parts": [
+            { "text": "Here you go" },
+            { "inlineData": { "mimeType": "image/png", "data": "RFJBRlQ=" }, "thought": true }
+        ] } }] });
+        let content = collect_stream_content(vec![text_and_draft]).await;
+        assert_eq!(
+            content,
+            "Here you go![image](data:image/png;base64,RFJBRlQ=)"
+        );
     }
 
     #[tokio::test]

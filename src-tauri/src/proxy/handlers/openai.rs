@@ -6311,26 +6311,19 @@ pub async fn handle_images_generations_internal(
                         .and_then(|content| content.get("parts"))
                         .and_then(|p| p.as_array())
                     {
-                        for part in parts {
-                            if let Some(img) = part.get("inlineData") {
-                                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                if !data.is_empty() {
-                                    if response_format == "url" {
-                                        let mime_type = img
-                                            .get("mimeType")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("image/png");
-                                        images.push(json!({
-                                            "url": format!("data:{};base64,{}", mime_type, data)
-                                        }));
-                                    } else {
-                                        images.push(json!({
-                                            "b64_json": data
-                                        }));
-                                    }
-                                    tracing::debug!("[Images] Task succeeded");
-                                }
+                        for image in
+                            crate::proxy::mappers::common_utils::select_output_images(parts)
+                        {
+                            if response_format == "url" {
+                                images.push(json!({
+                                    "url": format!("data:{};base64,{}", image.mime_type, image.data)
+                                }));
+                            } else {
+                                images.push(json!({
+                                    "b64_json": image.data
+                                }));
                             }
+                            tracing::debug!("[Images] Task succeeded");
                         }
                     }
                 }
@@ -6799,26 +6792,19 @@ pub async fn handle_images_edits(
                         .and_then(|content| content.get("parts"))
                         .and_then(|p| p.as_array())
                     {
-                        for part in parts {
-                            if let Some(img) = part.get("inlineData") {
-                                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                if !data.is_empty() {
-                                    if response_format == "url" {
-                                        let mime_type = img
-                                            .get("mimeType")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("image/png");
-                                        images.push(json!({
-                                            "url": format!("data:{};base64,{}", mime_type, data)
-                                        }));
-                                    } else {
-                                        images.push(json!({
-                                            "b64_json": data
-                                        }));
-                                    }
-                                    tracing::debug!("[Images] Task succeeded");
-                                }
+                        for image in
+                            crate::proxy::mappers::common_utils::select_output_images(parts)
+                        {
+                            if response_format == "url" {
+                                images.push(json!({
+                                    "url": format!("data:{};base64,{}", image.mime_type, image.data)
+                                }));
+                            } else {
+                                images.push(json!({
+                                    "b64_json": image.data
+                                }));
                             }
+                            tracing::debug!("[Images] Task succeeded");
                         }
                     }
                 }

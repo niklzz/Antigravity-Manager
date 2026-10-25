@@ -66,6 +66,7 @@ pub struct StreamingState {
     signatures: SignatureManager,
     trailing_signature: Option<String>,
     pub web_search_query: Option<String>,
+    output_images: crate::proxy::mappers::common_utils::OutputImageFilter,
     pub grounding_chunks: Option<Vec<serde_json::Value>>,
     // [IMPROVED] Error recovery 状态追踪 (prepared for future use)
     #[allow(dead_code)]
@@ -110,6 +111,7 @@ impl StreamingState {
             signatures: SignatureManager::new(),
             trailing_signature: None,
             web_search_query: None,
+            output_images: Default::default(),
             grounding_chunks: None,
             // [IMPROVED] 初始化 error recovery 字段
             parse_error_count: 0,
@@ -316,6 +318,27 @@ impl StreamingState {
         )
     }
 
+    /// 发送一个完整的独立 text 块（start + delta + stop）
+    fn emit_standalone_text_block(&mut self, text: &str) -> Vec<Bytes> {
+        let chunks = vec![
+            self.emit(
+                "content_block_start",
+                json!({
+                    "type": "content_block_start",
+                    "index": self.block_index,
+                    "content_block": { "type": "text", "text": "" }
+                }),
+            ),
+            self.emit_delta("text_delta", json!({ "text": text })),
+            self.emit(
+                "content_block_stop",
+                json!({ "type": "content_block_stop", "index": self.block_index }),
+            ),
+        ];
+        self.block_index += 1;
+        chunks
+    }
+
     /// 发送结束事件
     pub fn emit_finish(
         &mut self,
@@ -326,6 +349,11 @@ impl StreamingState {
 
         // 关闭最后一个块
         chunks.extend(self.end_block());
+
+        // 回复中只有思考草图而无最终图像时，补发最后一张草图
+        if let Some(image) = self.output_images.finish() {
+            chunks.extend(self.emit_standalone_text_block(&image.to_markdown()));
+        }
 
         // 处理 trailingSignature (B4/C3 场景)
         // [FIX] 只有当还没有发送过任何块时, 才能以 thinking 块结束(作为消息的开头)
@@ -375,21 +403,7 @@ impl StreamingState {
 
             let trimmed_grounding = grounding_text.trim();
             if !trimmed_grounding.is_empty() {
-                // 发送一个新的 text 块
-                chunks.push(self.emit(
-                    "content_block_start",
-                    json!({
-                        "type": "content_block_start",
-                        "index": self.block_index,
-                        "content_block": { "type": "text", "text": "" }
-                    }),
-                ));
-                chunks.push(self.emit_delta("text_delta", json!({ "text": trimmed_grounding })));
-                chunks.push(self.emit(
-                    "content_block_stop",
-                    json!({ "type": "content_block_stop", "index": self.block_index }),
-                ));
-                self.block_index += 1;
+                chunks.extend(self.emit_standalone_text_block(trimmed_grounding));
             }
         }
 
@@ -619,11 +633,12 @@ impl<'a> PartProcessor<'a> {
 
         // 3. InlineData (Image) 处理
         if let Some(img) = &part.inline_data {
-            let mime_type = &img.mime_type;
-            let data = &img.data;
-            if !data.is_empty() {
-                let markdown_img = format!("![image](data:{};base64,{})", mime_type, data);
-                chunks.extend(self.process_text(&markdown_img, None));
+            if let Some(image) = self.state.output_images.accept(
+                &img.mime_type,
+                &img.data,
+                part.thought.unwrap_or(false),
+            ) {
+                chunks.extend(self.process_text(&image.to_markdown(), None));
             }
         }
 
