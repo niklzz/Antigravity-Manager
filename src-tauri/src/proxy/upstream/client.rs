@@ -503,16 +503,48 @@ impl UpstreamClient {
                 || error_body.contains("No capacity available for model"))
     }
 
-    /// 计算上游多端点调用的全链路总超时时间预算（秒）
-    ///
-    /// 流式请求响应头基准保底 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，
-    /// 全链路总预算由原先的 150s 大幅收敛至 55~70s，杜绝主端点在排队拥塞时漫长挂起 85s~140s。
-    pub fn calculate_total_upstream_budget_secs(method: &str, body_len: usize) -> u64 {
-        let base_watchdog = if method == "streamGenerateContent" {
+    /// 首选端点的响应头看门狗基准（秒）：流式 30~45s、非流式 15~30s，随 payload 体积放宽；
+    /// 图像生成请求不低于 `image_gen_header_secs`。
+    fn base_header_watchdog_secs(
+        method: &str,
+        body_len: usize,
+        image_gen_header_secs: Option<u64>,
+    ) -> u64 {
+        let base = if method == "streamGenerateContent" {
             std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
         } else {
             std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
         };
+        base.max(image_gen_header_secs.unwrap_or(0))
+    }
+
+    /// 图像生成请求的响应头等待时长（秒），非图像请求返回 None。
+    ///
+    /// 图像模型不会逐字推流：上游在整张图渲染完成后才返回响应头，耗时常超过 45s
+    /// （编辑大图时更久）。若沿用文本请求的快探活看门狗，会把仍在正常生成的请求判为假死并中断，
+    /// 进而在端点与账号间反复重试。因此对其沿用首字等待宽限 `initial_ttft_secs`
+    /// （默认 180s，可在界面或通过 ANTIGRAVITY_TIMEOUT_TTFT_SECS 配置）。
+    /// 识别依据为请求体本身（requestType=image_gen 或 generationConfig.imageConfig），与模型名无关。
+    pub fn image_gen_header_wait_secs(body: &Value) -> Option<u64> {
+        let is_image_gen = body.get("requestType").and_then(Value::as_str) == Some("image_gen")
+            || body
+                .pointer("/request/generationConfig/imageConfig")
+                .is_some();
+        is_image_gen.then(|| crate::proxy::get_stream_timeout_config().initial_ttft_secs)
+    }
+
+    /// 计算上游多端点调用的全链路总超时时间预算（秒）
+    ///
+    /// 流式请求响应头基准保底 30s（超大 payload 弹性放宽至 45s），备用回退预算 25s，
+    /// 全链路总预算由原先的 150s 大幅收敛至 55~70s，杜绝主端点在排队拥塞时漫长挂起 85s~140s。
+    /// `image_gen_header_secs`: 图像生成请求的响应头等待下限（见 `image_gen_header_wait_secs`）。
+    pub fn calculate_total_upstream_budget_secs(
+        method: &str,
+        body_len: usize,
+        image_gen_header_secs: Option<u64>,
+    ) -> u64 {
+        let base_watchdog =
+            Self::base_header_watchdog_secs(method, body_len, image_gen_header_secs);
         let fallback_margin = if method == "streamGenerateContent" {
             25
         } else {
@@ -527,18 +559,17 @@ impl UpstreamClient {
     ///    若已确权容量枯竭则极速收敛至 15s；
     /// 2. 回退备用端点 (attempt_idx > 0): 采用快探活看门狗（流式上限 25s，非流式 15s，容量枯竭 15s）；
     /// 3. 受限于全链路剩余时间预算 `remaining_budget_secs`，并设置 5s 终极保底，防止由于网络开销导致为 0。
+    /// 4. 图像生成请求的首选端点基准提升至 `image_gen_header_secs`。
     pub fn calculate_endpoint_watchdog_secs(
         method: &str,
         body_len: usize,
         attempt_idx: usize,
         remaining_budget_secs: u64,
         is_capacity_exhausted: bool,
+        image_gen_header_secs: Option<u64>,
     ) -> u64 {
-        let base_watchdog = if method == "streamGenerateContent" {
-            std::cmp::min(45, std::cmp::max(30, (body_len as u64) / (64 * 1024) + 30))
-        } else {
-            std::cmp::min(30, std::cmp::max(15, (body_len as u64) / (256 * 1024) + 15))
-        };
+        let base_watchdog =
+            Self::base_header_watchdog_secs(method, body_len, image_gen_header_secs);
 
         let target_secs = if is_capacity_exhausted {
             15
@@ -702,8 +733,12 @@ impl UpstreamClient {
         let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
         let mut last_attempt_failed_at: Option<std::time::Instant> = None;
         let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-        let total_budget_secs =
-            Self::calculate_total_upstream_budget_secs(method, body_bytes.len());
+        let image_gen_header_secs = Self::image_gen_header_wait_secs(&body);
+        let total_budget_secs = Self::calculate_total_upstream_budget_secs(
+            method,
+            body_bytes.len(),
+            image_gen_header_secs,
+        );
         let call_overall_start = std::time::Instant::now();
         let mut is_capacity_exhausted = false;
 
@@ -761,6 +796,7 @@ impl UpstreamClient {
                     idx,
                     remaining_budget,
                     is_capacity_exhausted,
+                    image_gen_header_secs,
                 );
                 let send_future = req_builder.send();
                 let response = match tokio::time::timeout(
@@ -1361,8 +1397,11 @@ mod tests {
     #[test]
     fn test_calculate_watchdog_and_budget() {
         // streamGenerateContent primary attempt with ample budget (recalibrated to 30s base, 55s total)
-        let total_budget =
-            UpstreamClient::calculate_total_upstream_budget_secs("streamGenerateContent", 1024);
+        let total_budget = UpstreamClient::calculate_total_upstream_budget_secs(
+            "streamGenerateContent",
+            1024,
+            None,
+        );
         assert_eq!(total_budget, 55); // 30 + 25
 
         let wd_primary = UpstreamClient::calculate_endpoint_watchdog_secs(
@@ -1371,6 +1410,7 @@ mod tests {
             0,
             55,
             false,
+            None,
         );
         assert_eq!(wd_primary, 30);
 
@@ -1381,6 +1421,7 @@ mod tests {
             1,
             25,
             false,
+            None,
         );
         assert_eq!(wd_fallback, 25);
 
@@ -1391,6 +1432,7 @@ mod tests {
             1,
             25,
             true,
+            None,
         );
         assert_eq!(wd_exhausted, 15);
 
@@ -1401,6 +1443,7 @@ mod tests {
             1,
             10,
             false,
+            None,
         );
         assert_eq!(wd_clamped, 10);
 
@@ -1411,15 +1454,94 @@ mod tests {
             1,
             2,
             false,
+            None,
         );
         assert_eq!(wd_min, 5);
 
         // Non-stream methods have 15s base watchdog and 30s total budget
         let total_non_stream =
-            UpstreamClient::calculate_total_upstream_budget_secs("generateContent", 1024);
+            UpstreamClient::calculate_total_upstream_budget_secs("generateContent", 1024, None);
         assert_eq!(total_non_stream, 30); // 15 + 15
-        let wd_non_stream =
-            UpstreamClient::calculate_endpoint_watchdog_secs("generateContent", 1024, 0, 30, false);
+        let wd_non_stream = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "generateContent",
+            1024,
+            0,
+            30,
+            false,
+            None,
+        );
         assert_eq!(wd_non_stream, 15);
+    }
+
+    #[test]
+    fn test_image_generation_header_wait() {
+        let image_by_type =
+            serde_json::json!({ "requestType": "image_gen", "request": { "contents": [] } });
+        let image_by_config = serde_json::json!({
+            "request": { "generationConfig": { "imageConfig": { "aspectRatio": "1:1" } } }
+        });
+        let text = serde_json::json!({
+            "requestType": "agent",
+            "request": { "generationConfig": { "temperature": 1 } }
+        });
+        let ttft = crate::proxy::get_stream_timeout_config().initial_ttft_secs;
+        assert_eq!(
+            UpstreamClient::image_gen_header_wait_secs(&image_by_type),
+            Some(ttft)
+        );
+        assert_eq!(
+            UpstreamClient::image_gen_header_wait_secs(&image_by_config),
+            Some(ttft)
+        );
+        assert_eq!(UpstreamClient::image_gen_header_wait_secs(&text), None);
+
+        // A 3.5 MB image edit used to get 45s + 25s and was aborted while still rendering.
+        let body_len = 3_534_755;
+        let budget = UpstreamClient::calculate_total_upstream_budget_secs(
+            "streamGenerateContent",
+            body_len,
+            Some(180),
+        );
+        assert_eq!(budget, 205); // 180 + 25
+        let primary = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "streamGenerateContent",
+            body_len,
+            0,
+            budget,
+            false,
+            Some(180),
+        );
+        assert_eq!(primary, 180);
+
+        // Fallback endpoints, exhausted capacity and the remaining budget keep their limits.
+        let fallback = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "streamGenerateContent",
+            body_len,
+            1,
+            25,
+            false,
+            Some(180),
+        );
+        assert_eq!(fallback, 25);
+        let exhausted = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "streamGenerateContent",
+            body_len,
+            0,
+            budget,
+            true,
+            Some(180),
+        );
+        assert_eq!(exhausted, 15);
+
+        // The wait never drops below the regular watchdog when TTFT is configured lower.
+        let low_ttft = UpstreamClient::calculate_endpoint_watchdog_secs(
+            "streamGenerateContent",
+            body_len,
+            0,
+            100,
+            false,
+            Some(10),
+        );
+        assert_eq!(low_ttft, 45);
     }
 }
