@@ -133,6 +133,16 @@ fn extract_openai_content_summary(content: &OpenAIContent) -> String {
                     } => {
                         parts.push(format!("[video:{}]", video_url.url));
                     }
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::File { file } => {
+                        let name = file.filename.as_deref().unwrap_or("file");
+                        match (&file.file_data, &file.file_id) {
+                            (Some(data), _) => {
+                                parts.push(format!("[file:{}:{}]", name, data.len()))
+                            }
+                            (None, Some(id)) => parts.push(format!("[file:{}:{}]", name, id)),
+                            (None, None) => parts.push(format!("[file:{}]", name)),
+                        }
+                    }
                 }
             }
             parts.join(" ")
