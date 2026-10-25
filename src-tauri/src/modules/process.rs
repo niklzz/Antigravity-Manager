@@ -26,6 +26,25 @@ pub fn is_antigravity_ide_path(p: &std::path::Path) -> bool {
     is_antigravity_ide_str(&p.to_string_lossy())
 }
 
+/// Helper to determine if a process or binary is Antigravity Tools / Manager itself
+/// (e.g. antigravity-tools, antigravity_tools, antigravity-manager, antigravity_manager, or Linux 15-char comm truncation like antigravity-too / antigravity_too).
+pub fn is_manager_or_tools_process(name: &str, exe_path: &str, argv0: &str) -> bool {
+    let check = |s: &str| {
+        let lower = s.to_lowercase();
+        lower.contains("antigravity-tools")
+            || lower.contains("antigravity_tools")
+            || lower.contains("antigravitytools")
+            || lower.contains("antigravity-manager")
+            || lower.contains("antigravity_manager")
+            || lower.contains("antigravitymanager")
+            || lower.contains("antigravity-too") // Linux TASK_COMM_LEN 16 (15 chars) comm truncation
+            || lower.contains("antigravity_too")
+            || ((lower.contains("antigravity") || lower.contains("agy"))
+                && (lower.contains("tool") || lower.contains("manager")))
+    };
+    check(name) || check(exe_path) || check(argv0)
+}
+
 /// Helper to extract executable paths of Antigravity IDE instances
 /// Uses config path as primary, and falls back to cmd() arg scanning (works on macOS/Linux)
 fn get_ide_exe_paths(system: &System) -> std::collections::HashSet<String> {
@@ -162,6 +181,11 @@ pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
                     continue;
                 }
             }
+        }
+
+        // Exclude manager / tools processes
+        if is_manager_or_tools_process(&name, &exe_path, "") {
+            continue;
         }
 
         // Common helper process exclusion logic
@@ -336,15 +360,21 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
         }
 
         let name = process.name().to_string_lossy().to_lowercase();
+        let exe_path = process
+            .exe()
+            .and_then(|p| p.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // Exclude manager / tools processes
+        if is_manager_or_tools_process(&name, &exe_path, "") {
+            continue;
+        }
 
         #[cfg(target_os = "linux")]
         {
             // 1. Exclude family processes (self, children, parents)
             if family_pids.contains(&pid_u32) {
-                continue;
-            }
-            // 2. Extra protection: match "tools" likely manager if not a child
-            if name.contains("tools") {
                 continue;
             }
         }
@@ -498,6 +528,10 @@ pub fn sweep_orphan_language_servers() {
             .and_then(|p| p.to_str())
             .unwrap_or("")
             .to_lowercase();
+
+        if is_manager_or_tools_process(&name, &exe_path, "") {
+            continue;
+        }
 
         if (name.contains("language_server") || exe_path.contains("language_server"))
             && exe_path.contains("antigravity")
@@ -1329,6 +1363,13 @@ pub fn start_antigravity(target_ide: Option<&str>) -> Result<(), String> {
 /// 判断进程特征是否属于目标客户端：IDE 需任一特征命中 IDE 命名；
 /// 经典版需包含 antigravity 且所有特征都不带 IDE 命名，避免 IDE 实例被误判为经典版
 fn matches_target_client(target_ide: Option<&str>, features: &[&str]) -> bool {
+    // 任何匹配 manager/tools 自身的特征，绝对不可被判定为目标 IDE / 客户端
+    if features
+        .iter()
+        .any(|f| is_manager_or_tools_process(f, f, f))
+    {
+        return false;
+    }
     let any_ide = features.iter().any(|f| is_antigravity_ide_str(f));
     if target_ide == Some("ide") {
         any_ide
@@ -1383,19 +1424,28 @@ fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Op
                 .map(|arg| arg.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
 
+            if is_manager_or_tools_process(&name, &exe_path, &argv0) {
+                continue;
+            }
+
             // Extract actual arguments from command line (skipping exe path)
-            let args = args
-                .map(|arg| arg.to_string_lossy().to_lowercase())
+            // 保留命令行参数原始大小写，防止 Linux / macOS 区分大小写的文件系统下工作区路径被破坏
+            let raw_args = args
+                .map(|arg| arg.to_string_lossy().to_string())
                 .collect::<Vec<String>>();
 
-            let args_str = args.join(" ");
+            let args_lower_str = raw_args
+                .iter()
+                .map(|arg| arg.to_lowercase())
+                .collect::<Vec<String>>()
+                .join(" ");
 
             // Common helper process exclusion logic (strictly excludes language_server and sub-processes)
-            let is_helper = is_helper_process(&name, &args_str, &exe_path)
-                || is_helper_process(&name, &args_str, &argv0);
+            let is_helper = is_helper_process(&name, &args_lower_str, &exe_path)
+                || is_helper_process(&name, &args_lower_str, &argv0);
 
             // Sanitize snapshot arguments to prevent engine parameters like --standalone from leaking into relaunch
-            let clean_args = sanitize_restart_args(&args);
+            let clean_args = sanitize_restart_args(&raw_args);
             let path = Some(exe.to_path_buf());
             let args = Some(clean_args);
 
@@ -1699,6 +1749,9 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
                             if target_ide != Some("ide") && is_antigravity_ide_path(&p_cmd) {
                                 continue;
                             }
+                            if is_manager_or_tools_process("", &p_cmd.to_string_lossy(), "") {
+                                continue;
+                            }
                             return Some(p_cmd);
                         }
                     }
@@ -1710,6 +1763,8 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
                     std::path::PathBuf::from(format!("/opt/{}/{}", folder_name, exe_name)),
                     std::path::PathBuf::from(format!("/opt/{}/{}", exe_name, exe_name)),
                     std::path::PathBuf::from(format!("/usr/share/{}/{}", folder_name, exe_name)),
+                    std::path::PathBuf::from(format!("/usr/lib64/{}/{}", folder_name, exe_name)),
+                    std::path::PathBuf::from(format!("/usr/lib/{}/{}", folder_name, exe_name)),
                     std::path::PathBuf::from(format!("/var/lib/flatpak/exports/bin/{}", exe_name)),
                     std::path::PathBuf::from(format!("/snap/bin/{}", exe_name)),
                 ];
@@ -1721,14 +1776,18 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
                         home.join(format!(".local/share/flatpak/exports/bin/{}", exe_name)),
                     ];
                     for path in user_paths {
-                        if path.exists() {
+                        if path.exists()
+                            && !is_manager_or_tools_process("", &path.to_string_lossy(), "")
+                        {
                             return Some(path);
                         }
                     }
                 }
 
                 for path in possible_paths {
-                    if path.exists() {
+                    if path.exists()
+                        && !is_manager_or_tools_process("", &path.to_string_lossy(), "")
+                    {
                         return Some(path);
                     }
                 }
@@ -1954,6 +2013,17 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_restart_args_preserves_case() {
+        let mixed_case_args = vec![
+            "--standalone".to_string(),
+            "/Users/Developer/MyProject".to_string(),
+            "-R".to_string(),
+        ];
+        let cleaned = sanitize_restart_args(&mixed_case_args);
+        assert_eq!(cleaned, vec!["/Users/Developer/MyProject", "-R"]);
+    }
+
+    #[test]
     fn test_check_standard_locations_isolation() {
         // [FIX #3253] 经典版与默认探测绝不能匹配 Antigravity IDE
         if let Some(path) = check_standard_locations(Some("classic")) {
@@ -1973,5 +2043,78 @@ mod tests {
                 path
             );
         }
+    }
+
+    #[test]
+    fn test_is_manager_or_tools_process_filtering() {
+        // Antigravity Tools / Manager filenames and paths must be detected as manager
+        assert!(is_manager_or_tools_process("antigravity-tools", "", ""));
+        assert!(is_manager_or_tools_process("antigravity_tools", "", ""));
+        assert!(is_manager_or_tools_process("antigravity-too", "", "")); // Linux comm truncation
+        assert!(is_manager_or_tools_process("antigravity_too", "", ""));
+        assert!(is_manager_or_tools_process(
+            "",
+            "/home/hy/.local/bin/antigravity_tools_4.7.13",
+            ""
+        ));
+        assert!(is_manager_or_tools_process(
+            "",
+            "/tmp/.mount_antigro7E3N3/usr/bin/antigravity-tools",
+            ""
+        ));
+        assert!(is_manager_or_tools_process(
+            "antigravity-tools.exe",
+            "C:\\Program Files\\Antigravity Tools\\antigravity-tools.exe",
+            ""
+        ));
+        assert!(is_manager_or_tools_process(
+            "Antigravity Tools",
+            "/Applications/Antigravity Tools.app/Contents/MacOS/antigravity-tools",
+            ""
+        ));
+
+        // Real Antigravity IDE and classic client must NOT be flagged as manager
+        assert!(!is_manager_or_tools_process(
+            "antigravity",
+            "/usr/bin/antigravity",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "antigravity-ide",
+            "/usr/bin/antigravity-ide",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "Antigravity",
+            "/Applications/Antigravity.app/Contents/MacOS/Antigravity",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "Antigravity IDE",
+            "/Applications/Antigravity IDE.app/Contents/MacOS/Electron",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "Antigravity.exe",
+            "C:\\Users\\user\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe",
+            ""
+        ));
+        assert!(!is_manager_or_tools_process(
+            "Antigravity IDE.exe",
+            "C:\\Users\\user\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe",
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_matches_target_client_rejects_manager_and_tools() {
+        let manager_features = [
+            "/home/hy/.local/bin/antigravity_tools_4.7.13",
+            "/home/hy/.local/bin/antigravity_tools_4.7.13",
+            "antigravity_too",
+        ];
+        assert!(!matches_target_client(None, &manager_features));
+        assert!(!matches_target_client(Some("classic"), &manager_features));
+        assert!(!matches_target_client(Some("ide"), &manager_features));
     }
 }

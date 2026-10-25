@@ -8,7 +8,9 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_current_account': { url: '/api/accounts/current', method: 'GET' },
   'switch_account': { url: '/api/accounts/switch', method: 'POST' },
   'add_account': { url: '/api/accounts', method: 'POST' },
+  'batch_import_accounts': { url: '/api/accounts/batch-import', method: 'POST' },
   'delete_account': { url: '/api/accounts/:accountId', method: 'DELETE' },
+  'release_account_qos_jail': { url: '/api/accounts/:accountId/release-qos', method: 'POST' },
   'delete_accounts': { url: '/api/accounts/bulk-delete', method: 'POST' },
   'fetch_account_quota': { url: '/api/accounts/:accountId/quota', method: 'GET' },
   'refresh_account_quota': { url: '/api/accounts/:accountId/quota', method: 'GET' },
@@ -49,6 +51,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_proxy_stats': { url: '/api/proxy/stats', method: 'GET' },
   'set_proxy_monitor_enabled': { url: '/api/proxy/monitor/toggle', method: 'POST' },
   'set_proxy_capture_health_logs': { url: '/api/proxy/monitor/health-logs/toggle', method: 'POST' },
+  'test_model_connectivity': { url: '/api/proxy/test-model', method: 'POST' },
 
   // Logs & Monitoring
   'get_proxy_logs_filtered': { url: '/api/logs', method: 'GET' },
@@ -181,6 +184,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'renew_user_token': { url: '/api/user-tokens/:id/renew', method: 'POST' },
   'delete_user_token': { url: '/api/user-tokens/:id', method: 'DELETE' },
   'update_user_token': { url: '/api/user-tokens/:id', method: 'PATCH' },
+  'get_user_token_stats': { url: '/api/user-tokens/:id/stats', method: 'GET' },
+  'get_user_tokens_ranking': { url: '/api/user-tokens/ranking', method: 'GET' },
 
   // Proxy Pool (Web Mode Fix)
   'get_proxy_pool_config': { url: '/api/proxy/pool/config', method: 'GET' },

@@ -29,13 +29,27 @@ pub struct WarmupRequest {
     pub access_token: Option<String>,
     /// 可选：直接提供 Project ID
     pub project_id: Option<String>,
+    /// 可选：直接提供 Account ID
+    pub account_id: Option<String>,
 }
 
 /// 预热响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarmupResponse {
     pub success: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_retired: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,15 +65,27 @@ pub async fn handle_warmup(
 ) -> Response {
     let start_time = std::time::Instant::now();
 
+    let mapped_model = {
+        let custom_mapping = state.custom_mapping.read().await;
+        crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            &req.model,
+            &custom_mapping,
+            None,
+        )
+    };
+
     info!(
-        "[Warmup-API] ========== START: email={}, model={} ==========",
-        req.email, req.model
+        "[Warmup-API] ========== START: email={}, model={} (mapped={}) ==========",
+        req.email, req.model, mapped_model
     );
 
     // ===== 步骤 1: 获取 Token =====
     let (access_token, project_id, account_id) =
         if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
-            (at.clone(), pid.clone(), String::new())
+            let acc_id = req.account_id.clone().unwrap_or_else(|| {
+                crate::modules::account::find_account_id_by_email(&req.email).unwrap_or_default()
+            });
+            (at.clone(), pid.clone(), acc_id)
         } else {
             match state.token_manager.get_token_by_email(&req.email).await {
                 Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
@@ -70,15 +96,17 @@ pub async fn handle_warmup(
                     );
                     let duration = start_time.elapsed().as_millis() as u64;
                     let err_msg = format!("获取账号 Token 失败（非服务端故障）: {}", e);
+                    let log_id = uuid::Uuid::new_v4().to_string();
                     let log = ProxyRequestLog {
-                        id: uuid::Uuid::new_v4().to_string(),
+                        id: log_id.clone(),
                         timestamp: chrono::Utc::now().timestamp_millis(),
                         method: "POST".to_string(),
                         url: format!("/internal/warmup -> {}", req.model),
                         status: 400,
                         duration,
                         model: Some(req.model.clone()),
-                        mapped_model: Some(req.model.clone()),
+                        mapped_model: Some(mapped_model.clone()),
+                        upstream_model: Some(mapped_model.clone()),
                         account_email: Some(req.email.clone()),
                         client_ip: Some("127.0.0.1".to_string()),
                         error: Some(format!("Token Error (非服务端故障): {}", e)),
@@ -91,6 +119,7 @@ pub async fn handle_warmup(
                         input_tokens: Some(0),
                         output_tokens: Some(0),
                         cached_tokens: None,
+                        reasoning_tokens: None,
                         protocol: Some("warmup".to_string()),
                         username: None,
                         request_headers: None,
@@ -105,6 +134,12 @@ pub async fn handle_warmup(
                         Json(WarmupResponse {
                             success: false,
                             message: err_msg,
+                            log_id: Some(log_id),
+                            duration_ms: Some(duration),
+                            status: Some(400),
+                            account_email: Some(req.email.clone()),
+                            account_id: req.account_id.clone(),
+                            is_retired: None,
                             error: Some(e),
                             is_server_error: Some(false),
                             error_type: Some("token_error".to_string()),
@@ -116,8 +151,10 @@ pub async fn handle_warmup(
         };
 
     // ===== 步骤 2: 根据模型类型构建请求体 =====
-    let is_claude = req.model.to_lowercase().contains("claude");
-    let is_image = req.model.to_lowercase().contains("image");
+    let is_claude = mapped_model.to_lowercase().contains("claude")
+        || req.model.to_lowercase().contains("claude");
+    let is_image =
+        mapped_model.to_lowercase().contains("image") || req.model.to_lowercase().contains("image");
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换
@@ -127,7 +164,7 @@ pub async fn handle_warmup(
             &uuid::Uuid::new_v4().to_string()[..8]
         );
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
-            model: req.model.clone(),
+            model: mapped_model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
                 role: "user".to_string(),
                 content: crate::proxy::mappers::claude::models::MessageContent::String(
@@ -167,15 +204,17 @@ pub async fn handle_warmup(
                 );
                 let duration = start_time.elapsed().as_millis() as u64;
                 let err_msg = format!("请求报文转换失败（非服务端故障）: {}", e);
+                let log_id = uuid::Uuid::new_v4().to_string();
                 let log = ProxyRequestLog {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: log_id.clone(),
                     timestamp: chrono::Utc::now().timestamp_millis(),
                     method: "POST".to_string(),
                     url: format!("/internal/warmup -> {}", req.model),
                     status: 400,
                     duration,
                     model: Some(req.model.clone()),
-                    mapped_model: Some(req.model.clone()),
+                    mapped_model: Some(mapped_model.clone()),
+                    upstream_model: Some(mapped_model.clone()),
                     account_email: Some(req.email.clone()),
                     client_ip: Some("127.0.0.1".to_string()),
                     error: Some(format!("Transform Error (非服务端故障): {}", e)),
@@ -188,6 +227,7 @@ pub async fn handle_warmup(
                     input_tokens: Some(0),
                     output_tokens: Some(0),
                     cached_tokens: None,
+                    reasoning_tokens: None,
                     protocol: Some("warmup".to_string()),
                     username: None,
                     request_headers: None,
@@ -202,6 +242,16 @@ pub async fn handle_warmup(
                     Json(WarmupResponse {
                         success: false,
                         message: err_msg,
+                        log_id: Some(log_id),
+                        duration_ms: Some(duration),
+                        status: Some(400),
+                        account_email: Some(req.email.clone()),
+                        account_id: if account_id.is_empty() {
+                            None
+                        } else {
+                            Some(account_id.clone())
+                        },
+                        is_retired: None,
                         error: Some(e),
                         is_server_error: Some(false),
                         error_type: Some("transform_error".to_string()),
@@ -220,7 +270,7 @@ pub async fn handle_warmup(
 
         let base_request = if is_image {
             json!({
-                "model": req.model,
+                "model": mapped_model,
                 "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
                 "generationConfig": {
                     "maxOutputTokens": 10,
@@ -231,7 +281,7 @@ pub async fn handle_warmup(
             })
         } else {
             json!({
-                "model": req.model,
+                "model": mapped_model,
                 "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
                 "generationConfig": {
                     "temperature": 0
@@ -243,7 +293,7 @@ pub async fn handle_warmup(
         wrap_request(
             &base_request,
             &project_id,
-            &req.model,
+            &mapped_model,
             None,
             Some(&session_id),
             None,
@@ -255,7 +305,7 @@ pub async fn handle_warmup(
         .or_else(|_| serde_json::to_string(&body))
         .ok();
 
-    let model_lower = req.model.to_lowercase();
+    let model_lower = mapped_model.to_lowercase();
     let prefer_non_stream = model_lower.contains("flash-lite") || model_lower.contains("2.5-pro");
 
     let (method, query) = if prefer_non_stream {
@@ -300,24 +350,41 @@ pub async fn handle_warmup(
 
             let mut response = if status.is_success() {
                 let response_text = response.text().await.unwrap_or_default();
+                let is_retired = response_text.contains("no longer available")
+                    || response_text.contains("is not available")
+                    || response_text.contains("is retired")
+                    || response_text.contains("Please switch to");
+
+                let (final_success, message) = if is_retired {
+                    (false, format!("模型已退役下线: {}", response_text.trim()))
+                } else {
+                    (true, format!("Warmup triggered for {}", req.model))
+                };
+
                 info!(
-                    "[Warmup-API] ========== SUCCESS: {} / {} ({}ms) ==========",
-                    req.email, req.model, duration
+                    "[Warmup-API] ========== SUCCESS: {} / {} -> {} ({}ms, retired={}) ==========",
+                    req.email, req.model, mapped_model, duration, is_retired
                 );
 
                 // 记录成功预热请求到流量日志
+                let log_id = uuid::Uuid::new_v4().to_string();
                 let log = ProxyRequestLog {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: log_id.clone(),
                     timestamp: chrono::Utc::now().timestamp_millis(),
                     method: "POST".to_string(),
                     url: format!("/internal/warmup -> {}", req.model),
                     status: status_code,
                     duration,
                     model: Some(req.model.clone()),
-                    mapped_model: Some(req.model.clone()),
+                    mapped_model: Some(mapped_model.clone()),
+                    upstream_model: Some(mapped_model.clone()),
                     account_email: Some(req.email.clone()),
                     client_ip: Some("127.0.0.1".to_string()),
-                    error: None,
+                    error: if is_retired {
+                        Some("Model Retired (已退役下线)".to_string())
+                    } else {
+                        None
+                    },
                     request_body: Some(format!(
                         "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
                         req.model
@@ -326,11 +393,12 @@ pub async fn handle_warmup(
                     response_body: Some(if response_text.is_empty() {
                         "OK".to_string()
                     } else {
-                        response_text
+                        response_text.clone()
                     }),
                     input_tokens: Some(0),
                     output_tokens: Some(0),
                     cached_tokens: None,
+                    reasoning_tokens: None,
                     protocol: Some("warmup".to_string()),
                     username: None,
                     request_headers: None,
@@ -343,9 +411,23 @@ pub async fn handle_warmup(
                 (
                     StatusCode::OK,
                     Json(WarmupResponse {
-                        success: true,
-                        message: format!("Warmup triggered for {}", req.model),
-                        error: None,
+                        success: final_success,
+                        message,
+                        log_id: Some(log_id),
+                        duration_ms: Some(duration),
+                        status: Some(status_code),
+                        account_email: Some(req.email.clone()),
+                        account_id: if account_id.is_empty() {
+                            None
+                        } else {
+                            Some(account_id.clone())
+                        },
+                        is_retired: if is_retired { Some(true) } else { None },
+                        error: if is_retired {
+                            Some(response_text)
+                        } else {
+                            None
+                        },
                         is_server_error: None,
                         error_type: None,
                     }),
@@ -401,15 +483,17 @@ pub async fn handle_warmup(
                 }
 
                 // 记录失败的预热请求到流量日志（包含完整转发报文与响应报文）
+                let log_id = uuid::Uuid::new_v4().to_string();
                 let log = ProxyRequestLog {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: log_id.clone(),
                     timestamp: chrono::Utc::now().timestamp_millis(),
                     method: "POST".to_string(),
                     url: format!("/internal/warmup -> {}", req.model),
                     status: status_code,
                     duration,
                     model: Some(req.model.clone()),
-                    mapped_model: Some(req.model.clone()),
+                    mapped_model: Some(mapped_model.clone()),
+                    upstream_model: Some(mapped_model.clone()),
                     account_email: Some(req.email.clone()),
                     client_ip: Some("127.0.0.1".to_string()),
                     error: Some(format!("HTTP {} (上游拒绝，非服务端故障)", status_code)),
@@ -422,6 +506,7 @@ pub async fn handle_warmup(
                     input_tokens: Some(0),
                     output_tokens: Some(0),
                     cached_tokens: None,
+                    reasoning_tokens: None,
                     protocol: Some("warmup".to_string()),
                     username: None,
                     request_headers: None,
@@ -439,8 +524,18 @@ pub async fn handle_warmup(
                             "Warmup failed: HTTP {} (上游拒绝，非服务端故障)",
                             status_code
                         ),
+                        log_id: Some(log_id),
+                        duration_ms: Some(duration),
+                        status: Some(status_code),
+                        account_email: Some(req.email.clone()),
+                        account_id: if account_id.is_empty() {
+                            None
+                        } else {
+                            Some(account_id.clone())
+                        },
+                        is_retired: None,
                         error: Some(error_text),
-                        is_server_error: Some(false),
+                        is_server_error: Some(status_code >= 500),
                         error_type: Some("upstream_error".to_string()),
                     }),
                 )
@@ -451,7 +546,7 @@ pub async fn handle_warmup(
             if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
-            if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
+            if let Ok(model_val) = axum::http::HeaderValue::from_str(&mapped_model) {
                 response.headers_mut().insert("X-Mapped-Model", model_val);
             }
 
@@ -465,15 +560,17 @@ pub async fn handle_warmup(
             );
 
             // 记录失败的预热请求到流量日志
+            let log_id = uuid::Uuid::new_v4().to_string();
             let log = ProxyRequestLog {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: log_id.clone(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 method: "POST".to_string(),
                 url: format!("/internal/warmup -> {}", req.model),
                 status: 502,
                 duration,
                 model: Some(req.model.clone()),
-                mapped_model: Some(req.model.clone()),
+                mapped_model: Some(mapped_model.clone()),
+                upstream_model: Some(mapped_model.clone()),
                 account_email: Some(req.email.clone()),
                 client_ip: Some("127.0.0.1".to_string()),
                 error: Some(format!("Network Error (网络请求异常，非服务端故障): {}", e)),
@@ -486,6 +583,7 @@ pub async fn handle_warmup(
                 input_tokens: None,
                 output_tokens: None,
                 cached_tokens: None,
+                reasoning_tokens: None,
                 protocol: Some("warmup".to_string()),
                 username: None,
                 request_headers: None,
@@ -500,6 +598,16 @@ pub async fn handle_warmup(
                 Json(WarmupResponse {
                     success: false,
                     message: format!("网络请求失败（非服务端故障）: {}", e),
+                    log_id: Some(log_id),
+                    duration_ms: Some(duration),
+                    status: Some(502),
+                    account_email: Some(req.email.clone()),
+                    account_id: if account_id.is_empty() {
+                        None
+                    } else {
+                        Some(account_id.clone())
+                    },
+                    is_retired: None,
                     error: Some(e),
                     is_server_error: Some(false),
                     error_type: Some("network_error".to_string()),
@@ -511,11 +619,50 @@ pub async fn handle_warmup(
             if let Ok(email_val) = axum::http::HeaderValue::from_str(&req.email) {
                 response.headers_mut().insert("X-Account-Email", email_val);
             }
-            if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
+            if let Ok(model_val) = axum::http::HeaderValue::from_str(&mapped_model) {
                 response.headers_mut().insert("X-Mapped-Model", model_val);
             }
 
             response
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_warmup_model_route_resolution() {
+        let mut custom_mapping = HashMap::new();
+
+        // 裸模型 gemini-3.8-flash 必须被映射为具备官方实体的具名档位 (gemini-3.8-flash-tiered)
+        let mapped_flash = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            "gemini-3.8-flash",
+            &custom_mapping,
+            None,
+        );
+        assert_eq!(mapped_flash, "gemini-3.8-flash-tiered");
+
+        // 已带档位的具名模型保持不变
+        let mapped_high = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            "gemini-3.8-flash-high",
+            &custom_mapping,
+            None,
+        );
+        assert_eq!(mapped_high, "gemini-3.8-flash-high");
+
+        // 自定义映射优先起效
+        custom_mapping.insert(
+            "gpt-oss-120b".to_string(),
+            "gpt-oss-120b-medium".to_string(),
+        );
+        let mapped_gpt = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+            "gpt-oss-120b",
+            &custom_mapping,
+            None,
+        );
+        assert_eq!(mapped_gpt, "gpt-oss-120b-medium");
     }
 }

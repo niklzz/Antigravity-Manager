@@ -99,6 +99,12 @@ pub struct Account {
     /// 用户自定义标签
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_label: Option<String>,
+    /// [NEW] 运行时 QoS 状态 ("suspicious" | "jailed" | "probing" | "half_open")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos_status: Option<String>,
+    /// [NEW] 运行时 QoS 冷却剩余时间 (秒)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qos_reset_seconds: Option<u64>,
 }
 
 impl Account {
@@ -130,6 +136,8 @@ impl Account {
             proxy_id: None,
             proxy_bound_at: None,
             custom_label: None,
+            qos_status: None,
+            qos_reset_seconds: None,
         }
     }
 
@@ -194,6 +202,23 @@ pub struct AccountIndex {
     pub current_account_id: Option<String>,
     #[serde(default)]
     pub current_target_ide: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_classic_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_ide_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_agy_account_id: Option<String>,
+}
+
+/// 客户端独立当前账号状态（同时指示经典款、Antigravity IDE、Antigravity CLI 三端状态）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ActiveClientsStatus {
+    pub classic_account_id: Option<String>,
+    pub classic_email: Option<String>,
+    pub ide_account_id: Option<String>,
+    pub ide_email: Option<String>,
+    pub agy_account_id: Option<String>,
+    pub agy_email: Option<String>,
 }
 
 /// 账号摘要信息
@@ -220,6 +245,9 @@ impl AccountIndex {
             accounts: Vec::new(),
             current_account_id: None,
             current_target_ide: None,
+            current_classic_account_id: None,
+            current_ide_account_id: None,
+            current_agy_account_id: None,
         }
     }
 }
@@ -255,6 +283,34 @@ pub struct DeviceProfileVersion {
 pub struct AccountExportItem {
     pub email: String,
     pub refresh_token: String,
+}
+
+/// [NEW #3726] 批量导入输入项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportAccountEntry {
+    #[serde(default)]
+    pub email: Option<String>,
+    pub refresh_token: String,
+}
+
+/// [NEW #3726] 批量导入实时进度事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchImportProgress {
+    pub current: usize,
+    pub total: usize,
+    pub success: usize,
+    pub failed: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_email: Option<String>,
+}
+
+/// [NEW #3726] 批量导入最终统计结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchImportResult {
+    pub total: usize,
+    pub success: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
 }
 
 /// 导出账号响应

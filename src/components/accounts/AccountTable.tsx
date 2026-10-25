@@ -42,23 +42,23 @@ import {
     X,
     Check,
     Clock,
-    Bot,
     Repeat2,
     Terminal,
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
 } from 'lucide-react';
-import { type Account, type ModelQuota, getAccountTier } from '../../types/account';
+import { type Account, type ActiveClientsStatus, getAccountTier } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
 import { useConfigStore } from '../../stores/useConfigStore';
-import { QuotaItem } from './QuotaItem';
-import { getModelQuotaDisplay } from '../../utils/quotaDisplay';
-import { MODEL_CONFIG, sortModels, resolveQuotaModels, ensurePinnedImageSelector } from '../../config/modelConfig';
-import { categorizeModel, getModelProtectionKey } from '../../utils/modelCategory';
+import { GroupQuotaCard } from './GroupQuotaCard';
+import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { showToast } from '../common/ToastContainer';
+import { releaseAccountQoSJail } from '../../services/accountService';
+import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 
 // ============================================================================
@@ -72,6 +72,7 @@ interface AccountTableProps {
     onToggleSelect: (id: string) => void;
     onToggleAll: () => void;
     currentAccountId: string | null;
+    activeClients?: ActiveClientsStatus;
     switchingAccountId: string | null;
     onSwitch: (accountId: string, targetIde?: string) => void;
     onRefresh: (accountId: string) => void;
@@ -85,7 +86,6 @@ interface AccountTableProps {
     /** 拖拽排序回调，当用户完成拖拽时触发 */
     onReorder?: (accountIds: string[]) => void;
     onViewError: (accountId: string) => void;
-    quotaWindow?: '5h' | 'weekly';
 }
 
 interface SortableRowProps {
@@ -93,6 +93,7 @@ interface SortableRowProps {
     selected: boolean;
     isRefreshing: boolean;
     isCurrent: boolean;
+    activeClients?: ActiveClientsStatus;
     isSwitching: boolean;
     isDragging?: boolean;
     onSelect: () => void;
@@ -106,13 +107,13 @@ interface SortableRowProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
-    quotaWindow?: '5h' | 'weekly';
     isDragDisabled?: boolean;
 }
 
 interface AccountRowContentProps {
     account: Account;
     isCurrent: boolean;
+    activeClients?: ActiveClientsStatus;
     isRefreshing: boolean;
     isSwitching: boolean;
     isDisabled: boolean;
@@ -126,68 +127,50 @@ interface AccountRowContentProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
-    quotaWindow?: '5h' | 'weekly';
 }
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-
-
-function isModelProtected(protectedModels: string[] | undefined, modelName: string): boolean {
+function isGroupProtected(protectedModels: string[] | undefined, groupKey: 'gemini' | 'claude' | 'argon'): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
-    const lowerName = modelName.toLowerCase();
-
-    if (lowerName === 'gemini-pro') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'gemini-pro' && getModelProtectionKey(model) === 'gemini-3-pro-high',
-        );
+    if (groupKey === 'argon') {
+        return protectedModels.some(m => m.toLowerCase().includes('argon'));
+    } else if (groupKey === 'gemini') {
+        return protectedModels.some(m => m.toLowerCase().startsWith('gemini') && !m.toLowerCase().includes('argon'));
+    } else {
+        return protectedModels.some(m => m.toLowerCase().startsWith('claude') || m.toLowerCase().startsWith('gpt'));
     }
-    if (lowerName === 'gemini-flash') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'gemini-flash' && getModelProtectionKey(model) === 'gemini-3-flash',
-        );
-    }
-    if (lowerName === 'claude-sonnet') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'claude' && getModelProtectionKey(model) === 'claude',
-        );
-    }
-
-    const protectionKey = getModelProtectionKey(lowerName);
-    return protectionKey ? protectedModels.includes(protectionKey) : false;
 }
 
 /**
  * 提取账号的最快配额重置时间（毫秒时间戳）
  * 用于表格排序
  */
-function extractAccountResetTime(account: Account, quotaWindow?: '5h' | 'weekly'): number | null {
+function extractAccountResetTime(account: Account): number | null {
     let earliestTime: number | null = null;
 
-    if (quotaWindow === 'weekly') {
-        const groups = account.quota?.quota_groups || [];
-        for (const group of groups) {
-            for (const bucket of group.buckets || []) {
-                const isWeekly = bucket.window.toLowerCase().includes('week') || bucket.bucket_id.toLowerCase().includes('week');
-                if (isWeekly && bucket.reset_time) {
-                    const t = new Date(bucket.reset_time).getTime();
-                    if (!isNaN(t) && (earliestTime === null || t < earliestTime)) {
-                        earliestTime = t;
-                    }
-                }
-            }
-        }
-    } else {
-        // 5h 或常规视图下，从 models 中获取最近的 reset_time
-        const models = account.quota?.models || [];
-        for (const model of models) {
-            if (model.reset_time) {
-                const t = new Date(model.reset_time).getTime();
+    // 优先从 quota_groups 的各个 bucket 获取最早重置时间
+    const groups = account.quota?.quota_groups || [];
+    for (const group of groups) {
+        for (const bucket of group.buckets || []) {
+            if (bucket.reset_time) {
+                const t = new Date(bucket.reset_time).getTime();
                 if (!isNaN(t) && (earliestTime === null || t < earliestTime)) {
                     earliestTime = t;
                 }
+            }
+        }
+    }
+
+    // 也遍历 models 获取最早重置时间作为补充
+    const models = account.quota?.models || [];
+    for (const model of models) {
+        if (model.reset_time) {
+            const t = new Date(model.reset_time).getTime();
+            if (!isNaN(t) && (earliestTime === null || t < earliestTime)) {
+                earliestTime = t;
             }
         }
     }
@@ -208,6 +191,7 @@ function SortableAccountRow({
     selected,
     isRefreshing,
     isCurrent,
+    activeClients,
     isSwitching,
     isDragging,
     onSelect,
@@ -221,7 +205,6 @@ function SortableAccountRow({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
     isDragDisabled = false,
 }: SortableRowProps) {
     const { t } = useTranslation();
@@ -241,13 +224,18 @@ function SortableAccountRow({
         zIndex: isSortableDragging ? 1000 : 'auto',
     };
 
+    const isClassic = activeClients?.classic_account_id === account.id;
+    const isIde = activeClients?.ide_account_id === account.id;
+    const isAgy = activeClients?.agy_account_id === account.id;
+    const isRowCurrent = isCurrent || isClassic || isIde || isAgy;
+
     return (
         <tr
             ref={setNodeRef}
             style={style as React.CSSProperties}
             className={cn(
                 "group transition-colors border-b border-gray-100 dark:border-base-200",
-                isCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
+                isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
                 isDragging && "bg-blue-100 dark:bg-blue-900/30 shadow-lg",
                 !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
             )}
@@ -281,6 +269,7 @@ function SortableAccountRow({
             <AccountRowContent
                 account={account}
                 isCurrent={isCurrent}
+                activeClients={activeClients}
                 isRefreshing={isRefreshing}
                 isSwitching={isSwitching}
                 isDisabled={Boolean(account.disabled)}
@@ -294,7 +283,6 @@ function SortableAccountRow({
                 onWarmup={onWarmup}
                 onUpdateLabel={onUpdateLabel}
                 onViewError={onViewError}
-                quotaWindow={quotaWindow}
             />
         </tr>
     );
@@ -307,6 +295,7 @@ function SortableAccountRow({
 function AccountRowContent({
     account,
     isCurrent,
+    activeClients,
     isRefreshing,
     isSwitching,
     isDisabled,
@@ -320,21 +309,35 @@ function AccountRowContent({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
 }: AccountRowContentProps) {
     const { t } = useTranslation();
-    const { config, showAllQuotas } = useConfigStore();
+    const { config } = useConfigStore();
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
 
     // 自定义标签编辑状态
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [labelInput, setLabelInput] = useState(account.custom_label || '');
 
+    const isClassic = activeClients?.classic_account_id === account.id;
+    const isIde = activeClients?.ide_account_id === account.id;
+    const isAgy = activeClients?.agy_account_id === account.id;
+    const isRowActive = isCurrent || isClassic || isIde || isAgy;
+
     const handleSaveLabel = () => {
         if (onUpdateLabel) {
             onUpdateLabel(labelInput.trim());
         }
         setIsEditingLabel(false);
+    };
+
+    const handleReleaseJail = async () => {
+        try {
+            await releaseAccountQoSJail(account.id);
+            showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
+            onRefresh();
+        } catch (err: any) {
+            showToast(err?.message || '解除失败', 'error');
+        }
     };
 
     const handleCancelLabel = () => {
@@ -350,103 +353,59 @@ function AccountRowContent({
         }
     };
 
-    // 解析周配额项 (当处于 weekly 视图时)
-    const weeklyItems = useMemo(() => {
-        if (quotaWindow !== 'weekly') return [];
-        return (account.quota?.quota_groups || []).flatMap(group => {
-            return (group.buckets || [])
-                .filter(b => b.window.toLowerCase().includes('week') || b.bucket_id.toLowerCase().includes('week'))
-                .map(b => {
-                    const shortGroupName = (group.display_name || '')
-                        .replace(/ models?$/i, '')
-                        .replace(/Claude and GPT/i, 'Claude/GPT');
-                    return {
-                        id: `${group.display_name}-${b.bucket_id}`,
-                        label: b.display_name ? `${shortGroupName} (${b.display_name})` : `${shortGroupName} (周)`,
-                        percentage: Math.round((b.remaining_fraction || 0) * 100),
-                        resetTime: b.reset_time,
-                        cycleTokens: b.cycle_tokens,
-                        Icon: shortGroupName.toLowerCase().includes('claude') ? Sparkles : Bot,
-                    };
-                });
-        });
-    }, [quotaWindow, account.quota?.quota_groups]);
+    const tier = useMemo(() => getAccountTier(account), [account]);
+    const groupSummaries = useMemo(() => {
+        return getGroupQuotaSummaries(account.quota?.quota_groups, account.quota?.models, tier);
+    }, [account.quota?.quota_groups, account.quota?.models, tier]);
 
-    // 获取要显示的模型列表
-    const pinnedModels = ensurePinnedImageSelector(
-        config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG),
-    );
-
-    // 根据 show_all 状态决定显示哪些模型
-    const uniqueLabels = new Set<string>();
-    const displayModels = sortModels(
-        (showAllQuotas
-            ? (account.quota?.models || []).map(m => {
-                const config = MODEL_CONFIG[m.name.toLowerCase()];
-                const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
-                return {
-                    id: m.name.toLowerCase(),
-                    label: label,
-                    protectedKey: config?.protectedKey || m.name.toLowerCase(),
-                    data: m
-                };
-            })
-            : resolveQuotaModels(account.quota?.models, pinnedModels).map(sel => {
-                const selectorConfig = MODEL_CONFIG[sel.selectorId.toLowerCase()];
-                const resolvedConfig = sel.model ? MODEL_CONFIG[sel.model.name.toLowerCase()] : undefined;
-                if (!selectorConfig && !sel.model) return null;
-                const label = sel.model?.display_name
-                    || (resolvedConfig?.shortLabel || resolvedConfig?.label)
-                    || (selectorConfig?.shortLabel || selectorConfig?.label)
-                    || (resolvedConfig?.i18nKey ? t(resolvedConfig.i18nKey) : undefined)
-                    || (selectorConfig?.i18nKey ? t(selectorConfig.i18nKey) : undefined)
-                    || sel.selectorId;
-                return {
-                    id: sel.model?.name.toLowerCase() ?? sel.selectorId.toLowerCase(),
-                    label,
-                    protectedKey: getModelProtectionKey(sel.model?.name ?? sel.selectorId) ?? resolvedConfig?.protectedKey ?? selectorConfig?.protectedKey ?? sel.selectorId,
-                    data: sel.model,
-                };
-            }).filter((item): item is { id: string; label: string; protectedKey: string; data: ModelQuota | undefined } => item !== null)
-    ).filter(m => {
-            // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
-            const isHiddenThinking = m.id.includes('thinking');
-
-            if (isHiddenThinking) return false;
-
-            // 基于标签去重 (例如 G3.1 Pro 只显示一次)
-            // 优先显示有配额数据的 ID
-            const labelKey = `${m.label}-${m.protectedKey}`;
-            if (uniqueLabels.has(labelKey)) {
-                return false;
-            }
-            if (m.data) {
-                uniqueLabels.add(labelKey);
-                return true;
-            }
-            return true;
-        })
-    ).filter((m, index, self) => {
-        // 第二次过滤：确保即使没有数据的重复 Label 也只保留一个
-        const labelKey = `${m.label}-${m.protectedKey}`;
-        return self.findIndex(t => `${t.label}-${t.protectedKey}` === labelKey) === index;
-    });
-
+    const modelCapabilities = useMemo(() => {
+        const supported = Array.from(new Set(groupSummaries.flatMap(s => s.supportedModels || [])));
+        const hasArgon = supported.some(m => m.includes('argon')) || groupSummaries.some(s => s.key === 'argon');
+        const hasClaude55 = supported.some(m => m.includes('5-5') || m.includes('5.5'));
+        const hasClaude46 = supported.some(m => m.includes('4-6') || m.includes('4.6'));
+        const hasGpt = supported.some(m => m.startsWith('gpt'));
+        const hasGemini38 = supported.some(m => m.includes('3.8') || m.includes('3-8'));
+        return { hasArgon, hasClaude55, hasClaude46, hasGpt, hasGemini38, supportedCount: supported.length };
+    }, [groupSummaries]);
 
     return (
         <>
             {/* 邮箱列 */}
-            <td className="px-2 py-1 align-middle">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <td className="px-2 py-1.5 align-middle max-w-[320px]">
+                <div className="flex flex-col gap-1 min-w-0">
                     <span className={cn(
                         "font-medium text-sm break-all transition-colors",
-                        isCurrent ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
+                        isRowActive ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
                     )} title={account.email}>
                         {account.email}
                     </span>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        {isCurrent && (
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        {isClassic && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50"
+                                title={t('accounts.client_classic_tooltip', '当前 Antigravity 经典款客户端登录账号')}
+                            >
+                                {t('accounts.client_classic', '经典款')}
+                            </span>
+                        )}
+                        {isIde && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-[10px] font-bold shadow-sm border border-sky-200/50 dark:border-sky-800/50"
+                                title={t('accounts.client_ide_tooltip', '当前 Antigravity IDE 客户端登录账号')}
+                            >
+                                {t('accounts.client_ide', 'IDE')}
+                            </span>
+                        )}
+                        {isAgy && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold shadow-sm border border-emerald-200/50 dark:border-emerald-800/50"
+                                title={t('accounts.client_cli_tooltip', '当前 Antigravity CLI (agy) 登录账号')}
+                            >
+                                {t('accounts.client_cli', 'CLI')}
+                            </span>
+                        )}
+                        {!isClassic && !isIde && !isAgy && isCurrent && (
                             <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50">
                                 {t('accounts.current').toUpperCase()}
                             </span>
@@ -460,7 +419,7 @@ function AccountRowContent({
                             </span>
                         )}
 
-                        {account.proxy_disabled && (
+                        {account.proxy_disabled && !isDisabled && (
                             <span
                                 className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
                             >
@@ -481,6 +440,12 @@ function AccountRowContent({
                                 <span>{validationBlockedLabel}</span>
                             </span>
                         )}
+                        <QoSStatusBadge
+                            status={account.qos_status}
+                            resetSeconds={account.qos_reset_seconds}
+                            size="md"
+                            onRelease={handleReleaseJail}
+                        />
 
 
                         {/* 订阅类型徽章 */}
@@ -519,6 +484,37 @@ function AccountRowContent({
                                 {account.custom_label}
                             </span>
                         )}
+
+                        {/* 核心支持模型徽章栏 (直观展现该账号具体可用的旗舰模型代际) */}
+                        {modelCapabilities.hasArgon && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/15 to-indigo-500/15 text-purple-700 dark:text-purple-300 text-[10px] font-bold shadow-2xs border border-purple-200/60 dark:border-purple-800/50 cursor-default"
+                            >
+                                <Sparkles className="w-2.5 h-2.5 text-purple-500" />
+                                Argon
+                            </span>
+                        )}
+                        {modelCapabilities.hasClaude55 && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold shadow-2xs border border-amber-200/60 dark:border-amber-800/50 cursor-default"
+                            >
+                                Claude 5.5
+                            </span>
+                        )}
+                        {modelCapabilities.hasClaude46 && !modelCapabilities.hasClaude55 && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600/90 dark:text-amber-400/90 text-[10px] font-bold shadow-2xs border border-amber-200/40 dark:border-amber-800/30 cursor-default"
+                            >
+                                Claude 4.6
+                            </span>
+                        )}
+                        {modelCapabilities.hasGpt && (
+                            <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold shadow-2xs border border-emerald-200/60 dark:border-emerald-800/50 cursor-default"
+                            >
+                                GPT-120B
+                            </span>
+                        )}
                         {/* 标签编辑输入框 */}
                         {isEditingLabel && (
                             <div className="flex items-center gap-1">
@@ -553,7 +549,7 @@ function AccountRowContent({
             </td>
 
             {/* 模型配额列 */}
-            <td className="px-2 py-1 align-middle">
+            <td className="px-3 py-2 align-middle">
                 {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className={cn(
                         "flex items-center justify-center gap-3 py-1.5 px-4 rounded-xl border group/error",
@@ -583,40 +579,33 @@ function AccountRowContent({
                         </button>
                     </div>
                 ) : (
-                    <div className={cn(
-                        "grid gap-x-2 gap-y-1 py-0",
-                        (quotaWindow === 'weekly' && weeklyItems.length > 0)
-                            ? (weeklyItems.length === 1 ? "grid-cols-1" : "grid-cols-2")
-                            : (displayModels.length === 1 ? "grid-cols-1" : "grid-cols-2")
-                    )}>
-                        {quotaWindow === 'weekly' && weeklyItems.length > 0 ? (
-                            weeklyItems.map((item) => (
-                                <QuotaItem
-                                    key={item.id}
-                                    label={item.label}
-                                    percentage={item.percentage}
-                                    resetTime={item.resetTime}
-                                    weeklyTokens={item.cycleTokens ?? null}
-                                    Icon={item.Icon}
+                    <div className="flex flex-col gap-1.5 py-0.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {groupSummaries.filter(s => s.key !== 'argon').map((summary) => (
+                                <GroupQuotaCard
+                                    key={summary.key}
+                                    summary={summary}
+                                    isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, summary.key))}
+                                    liveLimit={summary.key === 'gemini' ? getLiveLimitForModel(account, 'gemini-pro') : getLiveLimitForModel(account, 'claude')}
+                                    compact
                                 />
-                            ))
-                        ) : (
-                            displayModels.map((model) => {
-                                const modelData = model.data;
-                                const display = getModelQuotaDisplay(model.id, modelData, account.quota?.quota_groups);
-
-                                return (
-                                    <QuotaItem
-                                        key={model.id}
-                                        label={model.label}
-                                        {...display}
-                                        isProtected={Boolean(config?.quota_protection?.enabled && isModelProtected(account.protected_models, model.protectedKey))}
-                                        liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
-                                        Icon={MODEL_CONFIG[model.id]?.Icon || Bot}
+                            ))}
+                        </div>
+                        {(() => {
+                            const argon = groupSummaries.find(s => s.key === 'argon');
+                            if (!argon) return null;
+                            return (
+                                <div className="w-full pt-0.5">
+                                    <GroupQuotaCard
+                                        summary={argon}
+                                        isProtected={Boolean(config?.quota_protection?.enabled && isGroupProtected(account.protected_models, 'argon'))}
+                                        liveLimit={getLiveLimitForModel(account, 'gemini-4-argon')}
+                                        compact
+                                        fullWidth
                                     />
-                                );
-                            })
-                        )}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
             </td>
@@ -765,6 +754,7 @@ function AccountTable({
     onToggleSelect,
     onToggleAll,
     currentAccountId,
+    activeClients,
     switchingAccountId,
     onSwitch,
     onRefresh,
@@ -777,7 +767,6 @@ function AccountTable({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
 }: AccountTableProps) {
     const { t } = useTranslation();
 
@@ -811,8 +800,8 @@ function AccountTable({
 
         return [...accounts].sort((a, b) => {
             if (sortConfig.key === 'reset_time') {
-                const timeA = extractAccountResetTime(a, quotaWindow);
-                const timeB = extractAccountResetTime(b, quotaWindow);
+                const timeA = extractAccountResetTime(a);
+                const timeB = extractAccountResetTime(b);
 
                 // 没有 reset_time 的排到后面
                 if (timeA === null && timeB === null) return 0;
@@ -831,7 +820,7 @@ function AccountTable({
 
             return 0;
         });
-    }, [accounts, sortConfig, quotaWindow, isSortingActive]);
+    }, [accounts, sortConfig, isSortingActive]);
 
     // 配置拖拽传感器
     const sensors = useSensors(
@@ -909,7 +898,7 @@ function AccountTable({
                                     )}
                                     title={t('accounts.table.sort_by_reset_time', '点击按配额重置时间排序')}
                                 >
-                                    <span>{quotaWindow === 'weekly' ? t('accounts.table.weekly_quota', '周配额') : t('accounts.table.quota')}</span>
+                                    <span>{t('accounts.table.quota', '模型配额')}</span>
                                     {sortConfig.key === 'reset_time' ? (
                                         sortConfig.direction === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /> : <ArrowDown className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                                     ) : (
@@ -947,6 +936,7 @@ function AccountTable({
                                     selected={selectedIds.has(account.id)}
                                     isRefreshing={refreshingIds.has(account.id)}
                                     isCurrent={account.id === currentAccountId}
+                                    activeClients={activeClients}
                                     isSwitching={account.id === switchingAccountId}
                                     isDragging={account.id === activeId}
                                     onSelect={() => onToggleSelect(account.id)}
@@ -960,7 +950,6 @@ function AccountTable({
                                     onWarmup={onWarmup ? () => onWarmup(account.id) : undefined}
                                     onUpdateLabel={onUpdateLabel ? (label: string) => onUpdateLabel(account.id, label) : undefined}
                                     onViewError={() => onViewError(account.id)}
-                                    quotaWindow={quotaWindow}
                                     isDragDisabled={isSortingActive}
                                 />
                             ))}
@@ -992,6 +981,7 @@ function AccountTable({
                                     <AccountRowContent
                                         account={activeAccount}
                                         isCurrent={activeAccount.id === currentAccountId}
+                                        activeClients={activeClients}
                                         isRefreshing={refreshingIds.has(activeAccount.id)}
                                         isSwitching={activeAccount.id === switchingAccountId}
                                         onSwitch={() => { }}
@@ -1003,7 +993,6 @@ function AccountTable({
                                         onToggleProxy={() => { }}
                                         isDisabled={Boolean(activeAccount.disabled)}
                                         onViewError={() => { }}
-                                        quotaWindow={quotaWindow}
                                     />
                                 </tr>
                             </tbody>

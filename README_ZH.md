@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.9.6)
+> 专业级 AI 账号管理与协议代理系统 (v5.0.0)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.9.6-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-5.0.0-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -302,17 +302,44 @@ env WEBKIT_DISABLE_DMABUF_RENDERER=1 ANTIGRAVITY_FORCE_WAYLAND=1 antigravity-too
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 export ANTHROPIC_API_KEY="sk-antigravity"
-jeikcode --model claude-sonnet-4-6-thinking
+jeikcode --model claude-sonnet-4-6
 ```
 > 更多高级配置与排查指南参见：[JeikCode 接入 Antigravity-Manager 指南](./docs/jeikcode_integration.md)
 
 ### 如何接入 Claude Code CLI?
+> **客户端推荐版本说明**：
+> - **稳定生产推荐**：`Claude Code v2.1.28x`（流完成校验相对宽松，网络抖动下鲁棒性最高）；
+> - **最新版本支持**：`Claude Code v2.1.293 ~ v2.1.295`（须配合部署包含断流防挂起与保活优化的网关版本，详见 [排查诊断文档](./docs/CLAUDE_CODE_STREAM_DIAGNOSIS.md)）。
+> 
+> 安装指定稳定版本示例：`npm install -g @anthropic-ai/claude-code@2.1.284`
+
 1.  启动 Antigravity，并在“API 反代”页面开启服务。
 2.  在终端执行：
 ```bash
 export ANTHROPIC_API_KEY="sk-antigravity"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 claude
+```
+
+### 终端原生切号工具 (`at` / `antigravity-tools`) 使用说明
+Antigravity 内置原生轻量级 CLI 切号套件，专为终端开发者打造，支持秒级轮换系统 Keychain 账号，并可在切换后自动接续 `agy` 交互式会话：
+
+```bash
+# 1. 查看所有账号列表、当前激活指示符 (👉) 与状态
+at list
+
+# 2. 查看当前在 agy CLI (Keychain)、IDE 分别生效的账号邮箱
+at current
+
+# 3. 切换账号 (支持序号、邮箱完整或前缀、账号别名)
+at switch 2                      # 切到序号 #2 的账号
+at switch work@gmail.com         # 按邮箱切号
+at switch work                   # 按邮箱前缀模糊切号
+at switch "工作号"               # 按账号别名切号
+at switch                        # 无参自动环形轮换 (Round-Robin) 至下一可用账号
+
+# 4. 切号并自动接续 agy 会话 (恢复上一次问答上下文)
+at switch 2 -c                   # -c 等价于 --continue
 ```
 
 ### 如何接入 OpenCode?
@@ -488,7 +515,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.9.6**（2026-10-06）——完整重新发布 v4.9.5 内容（v4.9.5 发布流水线因托管 Runner 资源不足被取消、未产出任何 Release 资产，代码完全一致）：根治思考预算无差别覆盖 32768、确立具名模型后缀（`-low`, `-medium`, `-high`）绝对最高优先级并无损回退 Default 模式与解耦 Claude 适配器（PR #3611，Fixes #3610）；Cowork 活跃消息修剪预算由 35k 降至 8k 深度归档，压缩后残余上下文降至 40k~45k tokens，压缩率突破 60%，双轨并轨为全局统一压缩状态机，引入动态净空防抖保障与 Claude 桌面进程生命周期管理，支持旧版补丁琥珀色警示与无损就地升级，macOS 签名容灾回滚保全官方证书链（PR #3604, #3609, #3603）；限制单请求 429 遍历账号池上限至 `min(pool_size, 2)`、引入阶梯退避与 Layer 2 乐观重试重置彻底消除 503 假死熔断，长连接会话 404/429 统一解绑自愈与跨协议成功计数重置，统一 Claude 共享配额保护组（PR #3608, #3606, #3602，Fixes #3506, #3517, #3509）；全面兼容 `antigravity-ide` 命名变体，严格阻断 IDE 穿透查询系统 Keyring，内核级进程识别并隔离 `state.vscdb`（PR #3608, #3600，Fixes #3598）；Gemini JSON Schema 深度清洗过滤非标 enum、实时透传上游流错误（504/503/429），OpenCode 注入 node 执行环境，规范 agy CLI 钥匙环 D-Bus 路径并打通 Web/Headless API 对齐（PR #3601, #3606, #3607，感谢 @cubelikeplayDaniel, @diannaaav）；GNOME Wayland 避免强制降级 X11、自动注入 DMA-BUF 保护并修复透明窗口判定（Fixes #3605, Ref #3581，感谢 @jeikl）。
+> 最新版本 **v5.0.0**（2026-10-24）：基于纯净同侪校准与阶梯探针的自适应 QoS 调度系统（TTFT 毫秒感知、纯净基线比对、瞬态 Suspicious 打标、粘性会话即刻解绑与后台自愈阶梯探针，解决上游静默降级排队卡死）(Fixes #3720, PR #3725)；官方权威模型全景升级、分级思考传输协议（thinkingLevel vs thinkingBudget）与 Argon 独立配额防穿透隔离，彻底解耦 quotaInfo 过滤门禁消除 503 缺陷，清退废弃代号并标准化各协议上下文与最大输出规格 (Fixes #3735, Fixes #3737)；OpenAI Responses API 结构化输出（responseSchema / text.format）规范化支持、思考预算收敛至 1024 杜绝 30s 硬超时、流水线工具冲突统一治理与出站受控整包解壳 (Fixes #3710, Ref #3723)；Mini 桌面悬浮视窗 macOS 原生真透明与拖拽置顶权限、深浅模式与 12 语种跨窗口毫秒级无感同步、原生 UI 主线程调度彻底根除 Win32 消息循环死锁，首帧同步判定与 React Router 404 兜底 (Fixes #3733, Ref #3718, #3721, Ref #3738, Ref #3741)；官方 Base64 哨兵规范对齐、Claude 全链路 0 哨兵与并发工具严格留空、异构工具切回 Gemini 赋予免检通行证且哨兵零落库；流式巨型工具调用缓冲自动跃迁至 Transition 宽限期赋予 180s 保护，上游响应头看门狗收敛至 30s，接入 FailureStatusTracker 根除 Claude 429 状态码泄漏 (Fixes #3739, Fixes #3713, Ref #3506, Ref #3525, PR #3740, PR #3714)；异步高性能批量流式导入与索引持久化重构（494 账号导入耗时由 28 分钟压缩至 15~20 秒，提速超 60 倍），冷启动读锁解耦秒级直出与本地快照首帧 0ms 水合消除空态闪烁 (Fixes #3726)；系统托盘富文本悬停配额卡片与 macOS 原生状态栏配额标题，Linux 窗口抢占置顶与自动拉起根治，解除经典款切号对 CLI 凭据的覆盖冲突 (Fixes #3719, Fixes #3728, Fixes #3686)；代理池专属绑定防 Direct 源站泄漏加固，集成 Hermes Agent / 本地探针端点（/props, /version），Gemini 协议支持标准 URL Query 传参鉴权，Web/Headless 模式保存配置全量内存热重载（感谢 @cubelikeplayDaniel, @jeikl）。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 

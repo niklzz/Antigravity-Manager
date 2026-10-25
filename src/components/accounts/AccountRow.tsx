@@ -5,6 +5,7 @@ import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { formatCompactDuration, getLiveLimitForModel, getLiveLimitState } from '../../utils/liveLimit';
 import { getModelProtectionKey, findQuotaModel, findImageQuotaModel } from '../../config/modelConfig';
+import { QoSStatusBadge } from './QoSStatusBadge';
 
 interface AccountRowProps {
     account: Account;
@@ -113,7 +114,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             </span>
                         )}
 
-                        {account.proxy_disabled && (
+                        {account.proxy_disabled && !isDisabled && (
                             <span
                                 className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
                                 title={account.proxy_disabled_reason || t('accounts.proxy_disabled_tooltip')}
@@ -129,6 +130,8 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 <span>{t('accounts.forbidden')}</span>
                             </span>
                         )}
+
+                        <QoSStatusBadge status={account.qos_status} size="md" />
 
                         {/* 订阅类型徽章 */}
                         {(() => {

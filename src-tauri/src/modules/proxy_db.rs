@@ -14,11 +14,18 @@ static TOOL_SIGNATURE_DB: OnceLock<Mutex<Option<(PathBuf, Connection)>>> = OnceL
 const THOUGHT_RAW_MAGIC: &[u8] = b"RAW1";
 const THOUGHT_GZIP_MAGIC: &[u8] = b"AGZ1";
 const MIN_GZIP_THOUGHT: usize = 384;
-pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+pub const SENTINEL_SIGNATURE: &str = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=";
+pub const LEGACY_SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
 pub const MIN_REAL_SIGNATURE: usize = 32;
 
+#[inline]
+pub fn is_sentinel_signature(s: &str) -> bool {
+    let trimmed = s.trim();
+    trimmed == SENTINEL_SIGNATURE || trimmed == LEGACY_SENTINEL_SIGNATURE
+}
+
 pub fn normalize_and_heal_signature(sig: &str) -> Option<String> {
-    if sig.is_empty() || sig == SENTINEL_SIGNATURE {
+    if sig.is_empty() || is_sentinel_signature(sig) {
         return None;
     }
     // 自愈防裂化：若签名被误传或脏存储为原始 Protobuf 二进制 (首字节 0x12)，自动纠正编码为标准 Base64
@@ -392,6 +399,10 @@ pub fn init_db() -> Result<(), String> {
         "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN reasoning_tokens INTEGER",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN account_email TEXT", []);
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN mapped_model TEXT", []);
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN protocol TEXT", []);
@@ -410,6 +421,10 @@ pub fn init_db() -> Result<(), String> {
         [],
     );
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN session_id TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN upstream_model TEXT",
+        [],
+    );
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_timestamp ON request_logs (timestamp DESC)",
@@ -509,15 +524,20 @@ fn map_request_log_row(row: &rusqlite::Row) -> rusqlite::Result<ProxyRequestLog>
         input_tokens: row.get(11).unwrap_or(None),
         output_tokens: row.get(12).unwrap_or(None),
         cached_tokens: row.get(13).unwrap_or(None),
-        account_email: row.get(14).unwrap_or(None),
-        mapped_model: row.get(15).unwrap_or(None),
-        protocol: row.get(16).unwrap_or(None),
-        client_ip: row.get(17).unwrap_or(None),
-        username: row.get(18).unwrap_or(None),
-        request_headers: row.get(19).unwrap_or(None),
-        upstream_request_headers: row.get(20).unwrap_or(None),
-        response_headers: row.get(21).unwrap_or(None),
-        session_id: row.get(22).unwrap_or(None),
+        reasoning_tokens: row.get(14).unwrap_or(None),
+        account_email: row.get(15).unwrap_or(None),
+        mapped_model: row.get(16).unwrap_or(None),
+        protocol: row.get(17).unwrap_or(None),
+        client_ip: row.get(18).unwrap_or(None),
+        username: row.get(19).unwrap_or(None),
+        request_headers: row.get(20).unwrap_or(None),
+        upstream_request_headers: row.get(21).unwrap_or(None),
+        response_headers: row.get(22).unwrap_or(None),
+        session_id: row.get(23).unwrap_or(None),
+        upstream_model: row
+            .get::<_, Option<String>>("upstream_model")
+            .ok()
+            .flatten(),
     })
 }
 
@@ -1138,32 +1158,47 @@ pub fn lookup_latest_thinking_signature(session_id: &str) -> Option<String> {
 }
 
 /// 为 UI 展示层兜底提供：按思考内容片段模糊查找权威签名
+/// 采用逆序扫描最新思考记录并自动解压 GZIP，杜绝 SQL LIKE 对二进制压缩 BLOB 检索失配
 pub fn lookup_signature_by_thought_snippet(snippet: &str) -> Option<String> {
     let clean = snippet.trim();
     if clean.is_empty() {
         return None;
     }
     let conn = thinking_db().ok()?;
-    let pattern = format!("%{}%", clean);
-    let (id, raw_sig): (i64, String) = conn
-        .query_row(
-            "SELECT id, signature FROM thinking_records 
-         WHERE thought LIKE ?1 AND signature IS NOT NULL 
-         ORDER BY id DESC LIMIT 1",
-            rusqlite::params![pattern],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT id, thought, signature FROM thinking_records
+             WHERE signature IS NOT NULL
+             ORDER BY id DESC LIMIT 50",
         )
         .ok()?;
-    let healed = normalize_and_heal_signature(&raw_sig);
-    if let Some(ref h) = healed {
-        if h != &raw_sig {
-            let _ = conn.execute(
-                "UPDATE thinking_records SET signature = ?1 WHERE id = ?2",
-                rusqlite::params![h, id],
-            );
+
+    let rows = stmt
+        .query_map([], |r| {
+            let id: i64 = r.get(0)?;
+            let thought_raw: Vec<u8> = r.get(1)?;
+            let raw_sig: String = r.get(2)?;
+            Ok((id, thought_raw, raw_sig))
+        })
+        .ok()?;
+
+    for row in rows.flatten() {
+        let (id, thought_raw, raw_sig) = row;
+        let unpacked = unpack_thought(&thought_raw);
+        if unpacked.contains(clean) {
+            let healed = normalize_and_heal_signature(&raw_sig);
+            if let Some(ref h) = healed {
+                if h != &raw_sig {
+                    let _ = conn.execute(
+                        "UPDATE thinking_records SET signature = ?1 WHERE id = ?2",
+                        rusqlite::params![h, id],
+                    );
+                }
+            }
+            return healed;
         }
     }
-    healed
+    None
 }
 
 /// 根据 fingerprint 精准穿透点查纯文本历史思考（利用 idx_thinking_rec_fp 索引）
@@ -1256,15 +1291,35 @@ pub fn delete_thinking_records_except_fingerprints(
     .map_err(|e| e.to_string())
 }
 
+pub fn delete_tool_signatures_for_session(session_key: &str) -> Result<usize, String> {
+    let clean_key = session_key.trim();
+    if clean_key.is_empty() {
+        return Ok(0);
+    }
+    let conn = connect_db()?;
+    let p1 = format!("{clean_key}\u{1f}%");
+    let p2 = format!("%:{clean_key}\u{1f}%");
+    conn.execute(
+        "DELETE FROM tool_signatures WHERE tool_id LIKE ?1 OR tool_id LIKE ?2",
+        params![p1, p2],
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn delete_thinking_records_for_session(session_key: &str) -> Result<usize, String> {
+    let clean = session_key.trim();
+    if clean.is_empty() {
+        return Ok(0);
+    }
     let conn = thinking_db()?;
+    let suffix = format!("%:{}", clean);
     let _ = conn.execute(
-        "DELETE FROM thinking_sessions WHERE session_key = ?1",
-        params![session_key],
+        "DELETE FROM thinking_sessions WHERE session_key = ?1 OR session_key LIKE ?2",
+        params![clean, suffix],
     );
     conn.execute(
-        "DELETE FROM thinking_records WHERE session_key = ?1",
-        params![session_key],
+        "DELETE FROM thinking_records WHERE session_key = ?1 OR session_key LIKE ?2",
+        params![clean, suffix],
     )
     .map_err(|e| e.to_string())
 }
@@ -1660,6 +1715,7 @@ fn save_log_with_connection(
         + [
             &log.model,
             &log.mapped_model,
+            &log.upstream_model,
             &log.account_email,
             &log.client_ip,
             &log.error,
@@ -1699,8 +1755,8 @@ fn save_log_with_connection(
     make_room(conn, budget, log_bytes)?;
 
     conn.execute(
-        "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, upstream_request_body, response_body, input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username, request_headers, upstream_request_headers, response_headers, session_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+        "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, upstream_request_body, response_body, input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username, request_headers, upstream_request_headers, response_headers, session_id, upstream_model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             log.id,
             log.timestamp,
@@ -1716,6 +1772,7 @@ fn save_log_with_connection(
             log.input_tokens,
             log.output_tokens,
             log.cached_tokens,
+            log.reasoning_tokens,
             log.account_email,
             log.mapped_model,
             log.protocol,
@@ -1725,6 +1782,7 @@ fn save_log_with_connection(
             log.upstream_request_headers,
             log.response_headers,
             log.session_id,
+            log.upstream_model,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -1739,9 +1797,9 @@ pub fn get_logs_summary(limit: usize, offset: usize) -> Result<Vec<ProxyRequestL
         .prepare(
             "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
-                input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
-                NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
+                NULL as request_headers, NULL as upstream_request_headers, response_headers,
+                session_id, upstream_model
          FROM request_logs 
          ORDER BY timestamp DESC 
          LIMIT ?1 OFFSET ?2",
@@ -1796,9 +1854,9 @@ pub fn get_log_detail(log_id: &str) -> Result<ProxyRequestLog, String> {
         .prepare(
             "SELECT id, timestamp, method, url, status, duration, model, error,
                 request_body, upstream_request_body, response_body, input_tokens, output_tokens,
-                cached_tokens, account_email, mapped_model, protocol, client_ip, username,
+                cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
                 request_headers, upstream_request_headers, response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          WHERE id = ?1",
         )
@@ -2216,6 +2274,125 @@ mod thinking_sqlite_tests {
             .unwrap();
         assert_eq!(sig_in_db, expected_base64);
     }
+
+    #[test]
+    fn test_delete_session_signatures_and_thinking_records_multi_tenant() {
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+
+        let sig = "EiYKJGUyNDgzMGE3LTVjZDYtNDJmZS05OThiLWVlNTM5ZTcyYjljMw==";
+
+        // 1. 准备多租户会话的思考记录
+        save_thinking_record(
+            "tenant_a:sess-compact",
+            "fp_1",
+            "thought 1",
+            Some(sig),
+            &[],
+            &[],
+            "vis 1",
+        )
+        .unwrap();
+        save_thinking_record(
+            "sess-compact",
+            "fp_2",
+            "thought 2",
+            Some(sig),
+            &[],
+            &[],
+            "vis 2",
+        )
+        .unwrap();
+        save_thinking_record(
+            "tenant_b:sess-other",
+            "fp_3",
+            "thought 3",
+            Some(sig),
+            &[],
+            &[],
+            "vis 3",
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_thinking_records("tenant_a:sess-compact")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(load_thinking_records("sess-compact").unwrap().len(), 1);
+        assert_eq!(
+            load_thinking_records("tenant_b:sess-other").unwrap().len(),
+            1
+        );
+
+        // 2. 准备会话作用域 tool_signatures
+        let scoped_key1 = format!("sess-compact\u{1f}call_1");
+        let scoped_key2 = format!("tenant_a:sess-compact\u{1f}call_2");
+        let scoped_key3 = format!("sess-other\u{1f}call_3");
+        save_tool_signature(&scoped_key1, sig).unwrap();
+        save_tool_signature(&scoped_key2, sig).unwrap();
+        save_tool_signature(&scoped_key3, sig).unwrap();
+
+        assert!(load_tool_signature(&scoped_key1).unwrap().is_some());
+        assert!(load_tool_signature(&scoped_key2).unwrap().is_some());
+        assert!(load_tool_signature(&scoped_key3).unwrap().is_some());
+
+        // 3. 执行 delete_tool_signatures_for_session("sess-compact")
+        let deleted_tools = delete_tool_signatures_for_session("sess-compact").unwrap();
+        assert_eq!(deleted_tools, 2);
+        assert!(load_tool_signature(&scoped_key1).unwrap().is_none());
+        assert!(load_tool_signature(&scoped_key2).unwrap().is_none());
+        assert!(load_tool_signature(&scoped_key3).unwrap().is_some());
+
+        // 4. 执行 delete_thinking_records_for_session("sess-compact") 支持租户前缀匹配
+        let deleted_records = delete_thinking_records_for_session("sess-compact").unwrap();
+        assert_eq!(deleted_records, 2);
+        assert_eq!(
+            load_thinking_records("tenant_a:sess-compact")
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(load_thinking_records("sess-compact").unwrap().len(), 0);
+        assert_eq!(
+            load_thinking_records("tenant_b:sess-other").unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_lookup_signature_by_thought_snippet_gzip_compressed() {
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+
+        let sig = "s".repeat(60);
+        let long_thought = format!(
+            "Start of long thought. {} Here is the unique marker: needle_in_compressed_thought. {} End of thought.",
+            "A".repeat(200),
+            "B".repeat(200)
+        );
+        assert!(long_thought.len() >= MIN_GZIP_THOUGHT);
+
+        save_thinking_record(
+            "sess-gzip-test",
+            "fp_gzip",
+            &long_thought,
+            Some(&sig),
+            &[],
+            &[],
+            "visible",
+        )
+        .unwrap();
+
+        // 验证即使底层以 GZIP1 二进制压缩存储，仍能穿透解压精准定位签名
+        let found = lookup_signature_by_thought_snippet("needle_in_compressed_thought");
+        assert_eq!(found, Some(sig));
+
+        // 不存在的片段应返回 None
+        let not_found = lookup_signature_by_thought_snippet("non_existent_snippet_xyz");
+        assert_eq!(not_found, None);
+    }
 }
 
 #[cfg(test)]
@@ -2265,6 +2442,33 @@ mod retention_tests {
                 .is_err()
         );
         assert!(get_log_detail("no-room").is_err());
+    }
+
+    #[test]
+    fn test_proxy_db_upstream_model_roundtrip() {
+        use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+
+        let mut log = sample_log("upstream-test", 100);
+        log.model = Some("gpt-4o".to_string());
+        log.mapped_model = Some("gemini-2.5-pro".to_string());
+        log.upstream_model = Some("gemini-2.5-pro-preview-05-06".to_string());
+
+        save_log(log.clone()).unwrap();
+
+        let detail = get_log_detail("upstream-test").unwrap();
+        assert_eq!(
+            detail.upstream_model.as_deref(),
+            Some("gemini-2.5-pro-preview-05-06")
+        );
+
+        let summaries = get_logs(10).unwrap();
+        let found = summaries.iter().find(|l| l.id == "upstream-test").unwrap();
+        assert_eq!(
+            found.upstream_model.as_deref(),
+            Some("gemini-2.5-pro-preview-05-06")
+        );
     }
 
     #[test]
@@ -2507,9 +2711,9 @@ pub fn get_logs_filtered(
     let sql = if errors_only {
         "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
-                input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
-                NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
+                NULL as request_headers, NULL as upstream_request_headers, response_headers,
+                session_id, upstream_model
          FROM request_logs
          WHERE (status < 200 OR status >= 400)
          ORDER BY timestamp DESC
@@ -2517,18 +2721,18 @@ pub fn get_logs_filtered(
     } else if filter.is_empty() {
         "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
-                input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
-                NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
+                NULL as request_headers, NULL as upstream_request_headers, response_headers,
+                session_id, upstream_model
          FROM request_logs
          ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2"
     } else {
         "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
-                input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
-                NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
+                NULL as request_headers, NULL as upstream_request_headers, response_headers,
+                session_id, upstream_model
          FROM request_logs
          WHERE (url LIKE ?3 OR method LIKE ?3 OR model LIKE ?3 OR CAST(status AS TEXT) LIKE ?3 OR account_email LIKE ?3 OR client_ip LIKE ?3 OR session_id LIKE ?3)
          ORDER BY timestamp DESC
@@ -2569,9 +2773,9 @@ pub fn get_all_logs_for_export() -> Result<Vec<ProxyRequestLog>, String> {
         .prepare(
             "SELECT id, timestamp, method, url, status, duration, model, error,
                 request_body, upstream_request_body, response_body, input_tokens, output_tokens,
-                cached_tokens, account_email, mapped_model, protocol, client_ip, username,
+                cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
                 request_headers, upstream_request_headers, response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          ORDER BY timestamp DESC",
         )

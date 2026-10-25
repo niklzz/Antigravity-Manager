@@ -16,12 +16,23 @@ export interface Account {
     protected_models?: string[];
     live_limited_models?: Record<string, LiveLimitStatus>;
     custom_label?: string;  // 用户自定义标签
+    qos_status?: 'suspicious' | 'jailed' | 'probing' | 'half_open' | null; // 运行时 QoS 状态
+    qos_reset_seconds?: number | null; // 运行时 QoS 冷却剩余秒数
     validation_blocked?: boolean;
     validation_blocked_until?: number;
     validation_blocked_reason?: string;
     validation_url?: string;
     created_at: number;
     last_used: number;
+}
+
+export interface ActiveClientsStatus {
+    classic_account_id?: string | null;
+    classic_email?: string | null;
+    ide_account_id?: string | null;
+    ide_email?: string | null;
+    agy_account_id?: string | null;
+    agy_email?: string | null;
 }
 
 export interface LiveLimitStatus {
@@ -137,4 +148,24 @@ export function getAccountTier(account: { quota?: QuotaData | null }): 'ultra' |
  */
 export function getTierLabel(tier: 'ultra' | 'pro' | 'free'): string {
     return tier.toUpperCase();
+}
+
+export interface ImportAccountEntry {
+    email?: string;
+    refresh_token: string;
+}
+
+export interface BatchImportProgress {
+    current: number;
+    total: number;
+    success: number;
+    failed: number;
+    current_email?: string;
+}
+
+export interface BatchImportResult {
+    total: number;
+    success: number;
+    failed: number;
+    errors: string[];
 }

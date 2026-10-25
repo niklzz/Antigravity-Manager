@@ -2,6 +2,8 @@ mod commands;
 pub mod constants;
 pub mod error;
 #[cfg(target_os = "linux")]
+pub mod linux_display_guard;
+#[cfg(target_os = "linux")]
 mod linux_graphics;
 mod models;
 mod modules;
@@ -75,9 +77,17 @@ fn should_enable_tray() -> bool {
     true
 }
 
-/// Login-item launches pass `--minimized`. Quiet startup applies only to that launch.
+/// Login-item launches or shortcut flags pass `--minimized`, `--silent`, `--hidden`, or `-s`.
+/// Quiet startup applies only to that launch.
 fn apply_login_launch_policy(app: &tauri::App) {
-    let launched_by_login = std::env::args().any(|arg| arg == "--minimized");
+    let launched_by_login = std::env::args().any(|arg| {
+        let lower = arg.to_lowercase();
+        lower == "--minimized"
+            || lower == "--silent"
+            || lower == "--hidden"
+            || lower == "-s"
+            || lower == "/minimized"
+    });
     if !launched_by_login {
         return;
     }
@@ -132,6 +142,8 @@ fn nvidia_proprietary_loaded() -> bool {
 
 #[cfg(target_os = "linux")]
 fn configure_linux_graphics() {
+    linux_display_guard::init_display_guard();
+
     use linux_graphics::{
         desktop_is_gnome, desktop_is_kde, desktop_is_wlroots_family, should_disable_webkit_dmabuf,
         should_force_x11_backend,
@@ -167,7 +179,7 @@ fn configure_linux_graphics() {
             || desktop_is_gnome(&desktop))
     {
         info!(
-            "Keeping native Wayland GDK backend on {} (avoiding Xwayland WebKitGTK frame freeze / transparent window).",
+            "Keeping native Wayland GDK backend on {} (avoiding Xwayland WebKitGTK frame freeze).",
             desktop
         );
     }
@@ -284,6 +296,22 @@ pub fn run() {
 
     // Check for headless mode
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for CLI subcommands (switch, list, current, etc.)
+    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        match runtime.block_on(modules::cli_handler::try_handle_cli(&args)) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("\x1b[31m[Antigravity CLI Error]\x1b[0m {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     let is_headless = args.iter().any(|arg| arg == "--headless");
 
     // Increase file descriptor limit (macOS only)
@@ -432,6 +460,12 @@ pub fn run() {
                         }
                     }
 
+                    // Initialize Hub fingerprint from config or detection
+                    crate::modules::hub_version::update_hub_fingerprint(
+                        config.proxy.hub_version.as_deref(),
+                        config.proxy.hub_cl.as_deref(),
+                    );
+
                     // Start proxy service
                     if let Err(e) = commands::proxy::internal_start_proxy_service(
                         config.proxy,
@@ -519,36 +553,6 @@ pub fn run() {
                 });
             }
 
-            // Linux: Workaround for transparent window crash/freeze under X11/Xwayland.
-            // The transparent window feature is unstable on Linux WebKitGTK under X11/Xwayland.
-            // We disable the visual alpha channel when running on X11 to prevent softbuffer-related crashes/invisible windows.
-            #[cfg(target_os = "linux")]
-            {
-                use tauri::Manager;
-                let running_x11 = std::env::var("GDK_BACKEND")
-                    .map(|v| v.eq_ignore_ascii_case("x11"))
-                    .unwrap_or(false)
-                    || !is_wayland_session();
-
-                if running_x11 {
-                    if let Some(window) = app.get_webview_window("main") {
-                        // Access GTK window and disable transparency at the GTK level
-                        if let Ok(gtk_window) = window.gtk_window() {
-                            use gtk::prelude::WidgetExt;
-                            // Remove the visual's alpha channel to disable transparency
-                            if let Some(screen) = gtk_window.screen() {
-                                // Use non-composited visual if available
-                                if let Some(visual) = screen.system_visual() {
-                                    gtk_window.set_visual(Some(&visual));
-                                }
-                                info!("Linux X11: Applied transparent window workaround (disabled alpha channel)");
-                            }
-                        }
-                    }
-                } else {
-                    info!("Linux native Wayland session detected; keeping Wayland visual");
-                }
-            }
 
             let runtime_flags = app.state::<AppRuntimeFlags>();
             if runtime_flags.tray_enabled {
@@ -563,6 +567,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 // Load config
                 if let Ok(config) = modules::config::load_app_config() {
+                    crate::modules::hub_version::update_hub_fingerprint(
+                        config.proxy.hub_version.as_deref(),
+                        config.proxy.hub_cl.as_deref(),
+                    );
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
                     let integration =
@@ -619,37 +627,85 @@ pub fn run() {
 
             apply_login_launch_policy(app);
 
+            ensure_cli_symlinks();
+
+            #[cfg(target_os = "linux")]
+            {
+                tauri::async_runtime::spawn(async {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sigterm = signal(SignalKind::terminate()).ok();
+                    let mut sigint = signal(SignalKind::interrupt()).ok();
+                    tokio::select! {
+                        _ = async {
+                            if let Some(ref mut s) = sigterm {
+                                s.recv().await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {},
+                        _ = async {
+                            if let Some(ref mut s) = sigint {
+                                s.recv().await;
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {},
+                    }
+                    tracing::info!("[Linux Display Guard] Received termination signal in background mode, shutting down cleanly.");
+                    std::process::exit(0);
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let tray_enabled = window
-                    .app_handle()
-                    .try_state::<AppRuntimeFlags>()
-                    .map(|flags| flags.tray_enabled)
-                    .unwrap_or(true);
-
-                if tray_enabled {
-                    api.prevent_close();
-
-                    let is_lightweight = modules::load_app_config()
-                        .map(|c| c.lightweight_mode)
-                        .unwrap_or(false);
-
-                    if is_lightweight {
-                        let _ = modules::lightweight::enter_lightweight_mode(window.app_handle());
-                    } else {
-                        let _ = window.hide();
-                        #[cfg(target_os = "macos")]
-                        {
-                            use tauri::Manager;
-                            window
-                                .app_handle()
-                                .set_activation_policy(tauri::ActivationPolicy::Accessory)
-                                .unwrap_or(());
+            match event {
+                tauri::WindowEvent::Focused(focused) => {
+                    if !focused && window.label() == "mini" {
+                        modules::tray::record_blur();
+                        if !modules::tray::is_mini_view_pinned() && modules::tray::is_mini_view_active() {
+                            let _ = window.hide();
+                            modules::tray::set_mini_view_active(false);
                         }
                     }
                 }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() == "mini" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        modules::tray::set_mini_view_active(false);
+                        return;
+                    }
+
+                    let tray_enabled = window
+                        .app_handle()
+                        .try_state::<AppRuntimeFlags>()
+                        .map(|flags| flags.tray_enabled)
+                        .unwrap_or(true);
+
+                    if tray_enabled {
+                        api.prevent_close();
+
+                        let is_lightweight = modules::load_app_config()
+                            .map(|c| c.lightweight_mode)
+                            .unwrap_or(false);
+
+                        if is_lightweight {
+                            let _ = modules::lightweight::enter_lightweight_mode(window.app_handle());
+                        } else {
+                            let _ = window.hide();
+                            #[cfg(target_os = "macos")]
+                            {
+                                use tauri::Manager;
+                                window
+                                    .app_handle()
+                                    .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                                    .unwrap_or(());
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -657,8 +713,10 @@ pub fn run() {
             // Account management commands
             commands::list_accounts,
             commands::add_account,
+            commands::batch_import_accounts,
             commands::delete_account,
             commands::delete_accounts,
+            commands::release_account_qos_jail,
             commands::reorder_accounts,
             commands::switch_account,
             commands::export_accounts,
@@ -674,6 +732,7 @@ pub fn run() {
             commands::delete_device_version,
             commands::open_device_folder,
             commands::get_current_account,
+            commands::get_active_clients_status,
             // Quota commands
             commands::fetch_account_quota,
             commands::refresh_all_quotas,
@@ -706,6 +765,14 @@ pub fn run() {
             commands::set_data_dir,
             commands::migrate_data_dir,
             commands::show_main_window,
+            commands::switch_to_main_window,
+            commands::show_mini_view,
+            commands::hide_mini_view,
+            commands::exit_app,
+            commands::set_mini_view_pinned,
+            commands::is_mini_view_pinned,
+            commands::set_mini_view_active,
+            commands::update_tray_for_account,
             commands::set_window_theme,
             commands::get_antigravity_path,
             commands::get_antigravity_cli_path,
@@ -739,6 +806,7 @@ pub fn run() {
             commands::proxy::clear_thinking_store,
             commands::proxy::get_thinking_store_count,
             commands::proxy::get_proxy_db_disk_size,
+            commands::proxy::test_model_connectivity,
             commands::proxy::generate_api_key,
             commands::proxy::reload_proxy_accounts,
             commands::proxy::update_model_mapping,
@@ -749,6 +817,8 @@ pub fn run() {
             commands::proxy::clear_proxy_session_bindings,
             commands::proxy::set_preferred_account,
             commands::proxy::get_preferred_account,
+            commands::proxy::get_hub_fingerprint,
+            commands::proxy::detect_remote_hub_fingerprint,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands
@@ -768,14 +838,17 @@ pub fn run() {
             commands::get_http_api_settings,
             commands::save_http_api_settings,
             // Token 统计命令
+            commands::get_token_stats_minute,
             commands::get_token_stats_hourly,
             commands::get_token_stats_daily,
             commands::get_token_stats_weekly,
             commands::get_token_stats_by_account,
             commands::get_token_stats_summary,
             commands::get_token_stats_by_model,
+            commands::get_token_stats_model_trend_minute,
             commands::get_token_stats_model_trend_hourly,
             commands::get_token_stats_model_trend_daily,
+            commands::get_token_stats_account_trend_minute,
             commands::get_token_stats_account_trend_hourly,
             commands::get_token_stats_account_trend_daily,
             proxy::cli_sync::get_cli_sync_status,
@@ -842,6 +915,8 @@ pub fn run() {
             commands::user_token::renew_user_token,
             commands::user_token::get_token_ip_bindings,
             commands::user_token::get_user_token_summary,
+            commands::user_token::get_user_token_stats,
+            commands::user_token::get_user_tokens_ranking,
             commands::query_transit_info,
             // Patch commands
             commands::patch_agy_binary,
@@ -917,3 +992,22 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(unix)]
+fn ensure_cli_symlinks() {
+    if let (Some(home), Ok(current_exe)) = (dirs::home_dir(), std::env::current_exe()) {
+        let local_bin = home.join(".local/bin");
+        if !local_bin.exists() {
+            let _ = std::fs::create_dir_all(&local_bin);
+        }
+        for name in &["antigravity-tools", "at"] {
+            let link = local_bin.join(name);
+            if !link.exists() {
+                let _ = std::os::unix::fs::symlink(&current_exe, &link);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_cli_symlinks() {}

@@ -1,5 +1,6 @@
 import i18n from '../i18n';
-import { Account, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
+import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult } from '../types/account';
+export type { ImportAccountEntry, BatchImportResult };
 import { request as invoke } from '../utils/request';
 
 export async function updateAccountPriority(accountId: string, priority: number): Promise<void> {
@@ -31,12 +32,21 @@ export async function getCurrentAccount(): Promise<Account | null> {
     return await invoke('get_current_account');
 }
 
+export async function getActiveClientsStatus(): Promise<ActiveClientsStatus> {
+    const res = await invoke<ActiveClientsStatus>('get_active_clients_status');
+    return res || {};
+}
+
 export async function addAccount(email: string, refreshToken: string): Promise<Account> {
     return await invoke('add_account', { email, refreshToken });
 }
 
 export async function deleteAccount(accountId: string): Promise<void> {
     return await invoke('delete_account', { accountId });
+}
+
+export async function releaseAccountQoSJail(accountId: string): Promise<void> {
+    return await invoke('release_account_qos_jail', { accountId });
 }
 
 export async function deleteAccounts(accountIds: string[]): Promise<void> {
@@ -127,6 +137,10 @@ export async function setActiveOAuthClient(clientKey: string): Promise<void> {
 }
 
 // 导入
+export async function batchImportAccounts(entries: ImportAccountEntry[]): Promise<BatchImportResult> {
+    return await invoke<BatchImportResult>('batch_import_accounts', { entries });
+}
+
 export async function importV1Accounts(): Promise<Account[]> {
     return await invoke('import_v1_accounts');
 }

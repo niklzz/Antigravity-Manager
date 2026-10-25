@@ -23,6 +23,7 @@ import {
     Save,
     Share2,
     Bot,
+    Timer,
     Play,
     Square,
     Info
@@ -38,11 +39,13 @@ import { CliSyncCard } from '../components/proxy/CliSyncCard';
 import { RequestProbeModal } from '../components/proxy/RequestProbeModal';
 import { pingModel, type PingResult } from '../utils/proxyProbe';
 import { listAccounts } from '../services/accountService';
+import { motion } from 'framer-motion';
 import CircuitBreaker from '../components/settings/CircuitBreaker';
 import GlobalSystemPrompt from '../components/settings/GlobalSystemPrompt';
 import ImageThinkingMode from '../components/settings/ImageThinkingMode';
 import ThinkingBudget from '../components/settings/ThinkingBudget';
 import MultimodalSettings from '../components/settings/MultimodalSettings';
+import StreamTimeoutSettings from '../components/settings/StreamTimeoutSettings';
 import AgentSettings from '../components/settings/AgentSettings';
 import { CircuitBreakerConfig } from '../types/config';
 
@@ -239,8 +242,6 @@ export default function ApiProxy() {
             clearInterval(cfInterval);
         };
     }, []);
-
-
 
     // [FIX #820] Load available accounts for fixed account mode
     const loadAccounts = async () => {
@@ -1549,8 +1550,8 @@ print(response.choices[0].message.content)`;
                     <div className="col-span-2 p-0">
                         <div className="overflow-x-auto">
                             <table className="table w-full">
-                                <thead className="bg-gray-50/50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
-                                    <tr>
+                                <thead className="bg-gray-50/70 dark:bg-gray-800/70 text-gray-500 dark:text-gray-400 select-none">
+                                    <tr className="border-b border-gray-100 dark:border-base-200">
                                         <th className="w-10 pl-3"></th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium">{t('proxy.supported_models.model_id')}</th>
@@ -1617,12 +1618,18 @@ print(response.choices[0].message.content)`;
                         </div>
                     </div>
                 </div>
+
             </div>
         );
     };
 
     return (
-        <div className="h-full w-full overflow-y-auto overflow-x-hidden">
+        <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="h-full w-full overflow-y-auto overflow-x-hidden"
+        >
             <div className="p-5 space-y-4 max-w-7xl mx-auto">
 
                 {/* Loading State */}
@@ -1667,7 +1674,7 @@ print(response.choices[0].message.content)`;
                 {!configLoading && !configError && appConfig && (
                     <div className="bg-white dark:bg-base-100 rounded-xl shadow-xs border border-gray-200/80 dark:border-base-200">
                         <div className="px-4 sm:px-5 py-2.5 border-b border-gray-100 dark:border-base-200 bg-gray-50/60 dark:bg-base-200/80 flex flex-wrap items-center justify-between gap-3">
-                            {/* 三个可选菜单栏：服务配置、CLI 一键配置、多协议支持 */}
+                            {/* 菜单栏：服务配置、模型配置、模型大全与协议、CLI 一键配置 */}
                             <div className="flex items-center gap-1.5 bg-gray-200/70 dark:bg-base-300/60 p-1 rounded-xl">
                                 <button
                                     type="button"
@@ -1695,18 +1702,6 @@ print(response.choices[0].message.content)`;
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setActiveMenuTab('cli')}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        activeMenuTab === 'cli'
-                                            ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs'
-                                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                                    }`}
-                                >
-                                    <Terminal size={14} className={activeMenuTab === 'cli' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
-                                    {t('proxy.cli_sync.title', { defaultValue: 'Agent工具一键配置' })}
-                                </button>
-                                <button
-                                    type="button"
                                     onClick={() => setActiveMenuTab('protocols')}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                                         activeMenuTab === 'protocols'
@@ -1716,6 +1711,18 @@ print(response.choices[0].message.content)`;
                                 >
                                     <Share2 size={14} className={activeMenuTab === 'protocols' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
                                     {t('proxy.multi_protocol.title')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveMenuTab('cli')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                        activeMenuTab === 'cli'
+                                            ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs'
+                                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                    }`}
+                                >
+                                    <Terminal size={14} className={activeMenuTab === 'cli' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
+                                    {t('proxy.cli_sync.title', { defaultValue: 'Agent工具一键配置' })}
                                 </button>
                             </div>
 
@@ -2157,6 +2164,19 @@ print(response.choices[0].message.content)`;
                         {/* TAB: 模型配置 (models) */}
                         {activeMenuTab === 'models' && (
                             <div className="p-4 space-y-4">
+                                {/* 流式超时设置 (Stream Timeout Settings) - 默认收起 */}
+                                <CollapsibleCard
+                                    title={t('proxy.config.stream_timeout_settings.title', { defaultValue: '流式超时设置 (Stream Timeout Settings)' })}
+                                    icon={<Timer size={18} className="text-blue-500" />}
+                                    defaultExpanded={false}
+                                >
+                                    <StreamTimeoutSettings
+                                        config={appConfig.proxy.stream_timeouts}
+                                        onChange={(timeoutConfig) => updateProxyConfig({ stream_timeouts: timeoutConfig })}
+                                        onSave={handleSaveProxySettings}
+                                    />
+                                </CollapsibleCard>
+
                                 {/* 思考设置 (Thinking & Reasoning Settings) - 默认收起 */}
                                 <CollapsibleCard
                                     title={t('proxy.config.thinking_settings.title', { defaultValue: '思考设置 (Thinking Settings)' })}
@@ -2178,6 +2198,10 @@ print(response.choices[0].message.content)`;
                                         thinkingRetentionDays={appConfig.proxy.experimental?.thinking_retention_days ?? 15}
                                         onThinkingRetentionDaysChange={(days: number) =>
                                             updateExperimentalConfig({ thinking_retention_days: days })
+                                        }
+                                        globalCompactionStripEnabled={appConfig.proxy.experimental?.enable_global_compaction_strip === true}
+                                        onGlobalCompactionStripChange={(enabled) =>
+                                            updateExperimentalConfig({ enable_global_compaction_strip: enabled })
                                         }
                                     />
                                 </CollapsibleCard>
@@ -2213,7 +2237,15 @@ print(response.choices[0].message.content)`;
                             </div>
                         )}
 
-                        {/* TAB 2: CLI 一键配置 (cli) */}
+                        {/* TAB 3: 模型大全与协议 (protocols) */}
+                        {activeMenuTab === 'protocols' && (
+                            <div className="p-4 space-y-6">
+                                {renderMultiProtocolSection()}
+                                {renderSupportedModelsSection()}
+                            </div>
+                        )}
+
+                        {/* TAB 4: CLI 一键配置 (cli) */}
                         {activeMenuTab === 'cli' && (
                             <div className="p-4">
                                 <div className="bg-gray-50/60 dark:bg-base-200/50 rounded-xl p-3 border border-gray-200/60 dark:border-base-300">
@@ -2222,14 +2254,6 @@ print(response.choices[0].message.content)`;
                                         apiKey={appConfig.proxy.api_key}
                                     />
                                 </div>
-                            </div>
-                        )}
-
-                        {/* TAB 3: 多协议支持 (protocols) */}
-                        {activeMenuTab === 'protocols' && (
-                            <div className="p-4 space-y-6">
-                                {renderMultiProtocolSection()}
-                                {renderSupportedModelsSection()}
                             </div>
                         )}
                     </div>
@@ -2323,6 +2347,33 @@ print(response.choices[0].message.content)`;
                                                 <div className="flex justify-between px-1 mt-1 text-[10px] text-gray-400 font-mono">
                                                     <span>0s</span>
                                                     <span>300s</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+                                                        {t('proxy.config.scheduling.max_spillover_accounts')}
+                                                        <HelpTooltip text={t('proxy.config.scheduling.max_spillover_accounts_tooltip')} />
+                                                    </label>
+                                                    <span className="text-xs font-mono text-indigo-600 font-bold">
+                                                        {(appConfig.proxy.scheduling?.max_spillover_accounts ?? 0) === 0
+                                                            ? t('proxy.config.scheduling.spillover_unlimited')
+                                                            : t('proxy.config.scheduling.spillover_count', { count: appConfig.proxy.scheduling?.max_spillover_accounts })}
+                                                    </span>
+                                                </div>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="10"
+                                                    step="1"
+                                                    className="range range-indigo range-xs"
+                                                    value={appConfig.proxy.scheduling?.max_spillover_accounts ?? 0}
+                                                    onChange={(e) => updateSchedulingConfig({ max_spillover_accounts: parseInt(e.target.value) || 0 })}
+                                                />
+                                                <div className="flex justify-between px-1 mt-1 text-[10px] text-gray-400 font-mono">
+                                                    <span>0 ({t('proxy.config.scheduling.spillover_unlimited')})</span>
+                                                    <span>10</span>
                                                 </div>
                                             </div>
 
@@ -2756,7 +2807,7 @@ print(response.choices[0].message.content)`;
                         onClose={() => setProbeModel(null)}
                     />
                 )}
-            </div >
-        </div >
+            </div>
+        </motion.div>
     );
 }

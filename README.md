@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional Account Management & Protocol Proxy System for AI Services (v4.9.6)
+> Professional Account Management & Protocol Proxy System for AI Services (v5.0.0)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.9.6-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-5.0.0-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -301,17 +301,44 @@ env WEBKIT_DISABLE_DMABUF_RENDERER=1 ANTIGRAVITY_FORCE_WAYLAND=1 antigravity-too
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 export ANTHROPIC_API_KEY="sk-antigravity"
-jeikcode --model claude-sonnet-4-6-thinking
+jeikcode --model claude-sonnet-4-6
 ```
 > For complete manual configuration and tuning, see the [JeikCode Integration Guide](./docs/jeikcode_integration.md).
 
 ### How to use with Claude Code CLI?
+> **Recommended Client Versions**:
+> - **Stable Production Recommendation**: `Claude Code v2.1.28x` (more permissive stream termination verification, highest resilience under network jitter);
+> - **Latest Versions Support**: `Claude Code v2.1.293 ~ v2.1.295` (requires deploying the gateway version with stream hang prevention and keepalive optimizations, see [Diagnosis Guide](./docs/CLAUDE_CODE_STREAM_DIAGNOSIS.md)).
+> 
+> Install recommended stable version: `npm install -g @anthropic-ai/claude-code@2.1.284`
+
 1. Start Antigravity service in the "API Proxy" tab.
 2. In your terminal:
 ```bash
 export ANTHROPIC_API_KEY="sk-antigravity"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 claude
+```
+
+### Native CLI Account Switcher (`at` / `antigravity-tools`)
+Antigravity includes a lightweight native CLI suite designed for terminal developers. It enables instant system Keychain credential rotation and seamless session continuation with `agy`:
+
+```bash
+# 1. List all accounts with status and active indicators (👉)
+at list
+
+# 2. Inspect currently active accounts across agy CLI (Keychain) and IDE
+at current
+
+# 3. Switch account (supports 1-based index, email, prefix, or alias)
+at switch 2                      # Switch to account #2
+at switch work@gmail.com         # Switch by email
+at switch work                   # Switch by email prefix
+at switch "WorkAccount"          # Switch by account name
+at switch                        # Auto round-robin to next normal account
+
+# 4. Switch and automatically resume agy session
+at switch 2 -c                   # -c is short for --continue
 ```
 
 ### How to use with OpenCode?
@@ -487,7 +514,7 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 ## 📝 Changelog
 
-> Latest version **v4.9.6** (2026-10-06) — full republish of v4.9.5 (its release pipeline was cancelled by hosted runner starvation and produced no Release assets; codebase is identical): Eliminates thinking budget 32768 overwriting, enforces absolute highest priority for named model suffixes (`-low`, `-medium`, `-high`), restores default mode fallback, and decouples Claude adapter (PR #3611, Fixes #3610); lowers Cowork pruning budget to 8k deep archive reducing residual context to 40k~45k tokens (60%+ compaction ratio), merges dual compaction state machines, introduces dynamic headroom anti-thrashing, adds Claude desktop process lifecycle management with legacy patch alerts and seamless upgrade, and safeguards macOS binary signing with rollback (PR #3604, #3609, #3603); caps single-request 429 pool traversal to `min(pool_size, 2)` with tiered backoff and Layer 2 optimistic reset to eliminate false 503 circuit-breaker failures, unifies long-lived sticky session unbinding and cross-protocol success counter recovery, and normalizes unified Claude quota protection groups (PR #3608, #3606, #3602, Fixes #3506, #3517, #3509); supports `antigravity-ide` naming variants, blocks Keyring credential leakage, hardens kernel-level process detection, and isolates `state.vscdb` (PR #3608, #3600, Fixes #3598); sanitizes Gemini JSON Schema enums, propagates real-time SSE stream errors (504/503/429), injects node search paths for OpenCode, corrects agy CLI Keyring D-Bus path and aligns Web/Headless APIs (PR #3601, #3606, #3607, thanks to @cubelikeplayDaniel, @diannaaav); resolves GNOME Wayland rendering freezes with DMA-BUF injection and fixes transparent window logic under X11/Xwayland (Fixes #3605, Ref #3581, thanks to @jeikl).
+> Latest version **v5.0.0** (2026-10-24): Adaptive QoS scheduling system via pure peer calibration and ladder probing (sub-second TTFT awareness, peer baselines, transient Suspicious tagging, immediate sticky session handover, and background self-healing ladder probes resolving silent upstream throttling) (Fixes #3720, PR #3725); official model catalog upgrade, tiered thinking protocol (thinkingLevel vs thinkingBudget), and Argon standalone quota isolation, decoupling quotaInfo ingestion gates to eliminate 503 errors and standardizing context windows and output limits across all protocols (Fixes #3735, Fixes #3737); OpenAI Responses API structured outputs (responseSchema / text.format), background thinking budget convergence to 1024 preventing 30s timeouts, pipeline tool conflict mitigation, and guarded code fence unwrapping (Fixes #3710, Ref #3723); Mini floating HUD native macOS transparency, dark/light and 12-language cross-window millisecond sync, native OS main-thread window scheduling eliminating Win32 message loop deadlocks, synchronous frame resolution, and React Router 404 fallbacks (Fixes #3733, Ref #3718, #3721, Ref #3738, Ref #3741); official Base64 sentinel alignment, Claude zero-sentinel and concurrent tool cleanliness, foreign tool transition passports, and zero database persistence; streaming giant tool call buffer promotion to Transition grace period with 180s protection, upstream TTFT watchdog budget convergence to 30s, and FailureStatusTracker integration eliminating Claude 429 leaks (Fixes #3739, Fixes #3713, Ref #3506, Ref #3525, PR #3740, PR #3714); asynchronous streaming batch import pipeline (slashing 494 account imports from 28 minutes to 15~20 seconds, >60x speedup), cold start non-blocking lock decoupling, and local snapshot 0ms hydration eliminating empty flashes (Fixes #3726); cross-platform tray rich-text hover tooltips, macOS status bar quota titles, Linux window focus stealing root-cause fix, and CLI credential overwrite protection (Fixes #3719, Fixes #3728, Fixes #3686); proxy pool dedicated bound account anti-Direct leak protection, Hermes Agent / local probe compatibility (/props, /version), Gemini URL Query auth, and Web/Headless full memory hot-reloading (thanks to @cubelikeplayDaniel, @jeikl).
 
 👉 **[View Full Changelog → CHANGELOG_EN.md](CHANGELOG_EN.md)**
 
