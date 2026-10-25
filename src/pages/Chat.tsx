@@ -15,7 +15,14 @@ import {
     streamChat,
     type ChatTurn,
 } from '../services/chatService';
-import { loadAttachmentData, saveAttachmentData, type LoadedAttachment } from '../services/chatAttachments';
+import {
+    extractReplyImages,
+    inlineReplyImages,
+    loadAttachmentData,
+    saveAttachmentData,
+    type ChatAttachment,
+    type LoadedAttachment,
+} from '../services/chatAttachments';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { ChatComposer, type ChatComposerHandle } from '../components/chat/ChatComposer';
 import { ChatMessageView } from '../components/chat/ChatMessageView';
@@ -136,10 +143,16 @@ function Chat() {
             // Coalesce token deltas into at most one store update per animation frame.
             let text = '';
             let thinking = '';
+            const images: ChatAttachment[] = [];
             let frame = 0;
+            const snapshot = () => ({
+                content: text,
+                thinking: thinking || undefined,
+                ...(images.length ? { attachments: [...images] } : {}),
+            });
             const flush = () => {
                 frame = 0;
-                patchMessage(sessionId, assistantId, () => ({ content: text, thinking: thinking || undefined }));
+                patchMessage(sessionId, assistantId, snapshot);
             };
             const schedule = () => {
                 if (!frame) frame = requestAnimationFrame(flush);
@@ -157,7 +170,9 @@ function Chat() {
                     temperature: opts.temperature,
                     signal: controller.signal,
                     onText: (d) => {
-                        text += d;
+                        const extracted = extractReplyImages(text + d, newId);
+                        text = extracted.text;
+                        images.push(...extracted.images);
                         schedule();
                     },
                     onThinking: (d) => {
@@ -181,8 +196,7 @@ function Chat() {
                 if (frame) cancelAnimationFrame(frame);
                 patchMessage(sessionId, assistantId, () => ({
                     ...finalPatch,
-                    content: text,
-                    thinking: thinking || undefined,
+                    ...snapshot(),
                     pending: false,
                     durationMs: Math.round(performance.now() - started),
                 }));
@@ -200,6 +214,8 @@ function Chat() {
                 .filter((m) => !m.pending && (m.content || m.attachments?.length))
                 .map(async (m) => {
                     if (!m.attachments?.length) return { role: m.role, content: m.content };
+                    // Generated images ride inside the reply text; the proxy turns them back into image parts.
+                    if (m.role === 'assistant') return { role: m.role, content: await inlineReplyImages(m.content, m.attachments) };
                     const attachments: LoadedAttachment[] = [];
                     const missing: string[] = [];
                     for (const a of m.attachments) {

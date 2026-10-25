@@ -1,11 +1,12 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AlertCircle, Brain, Check, ChevronRight, Copy, RotateCcw } from 'lucide-react';
+import { AlertCircle, Brain, Check, ChevronRight, Copy, ImageOff, RotateCcw } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import type { ChatMessage } from '../../stores/useChatStore';
-import { AttachmentPreview } from './AttachmentPreview';
+import { attachmentIdFromUrl, stripReplyImages, toDataUrl, type ChatAttachment } from '../../services/chatAttachments';
+import { AttachmentPreview, Lightbox, useAttachmentData } from './AttachmentPreview';
 
 async function copyText(text: string) {
     try {
@@ -81,10 +82,57 @@ const markdownComponents = {
     ),
 };
 
-export const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+/** A generated image, stored as an attachment and referenced from the reply text. */
+function ReplyImage({ image, alt }: { image: ChatAttachment; alt: string }) {
+    const { t } = useTranslation();
+    const payload = useAttachmentData(image.id);
+    const [zoomed, setZoomed] = useState(false);
+    if (payload === null) {
+        return (
+            <span
+                title={t('chat.attach_unavailable', 'Attachment is no longer available')}
+                className="my-3 flex h-24 w-24 items-center justify-center rounded-xl border border-dashed border-gray-300 dark:border-base-200 text-gray-400"
+            >
+                <ImageOff size={18} />
+            </span>
+        );
+    }
+    if (payload === undefined) return <span className="my-3 block h-64 w-64 max-w-full rounded-xl bg-gray-100 dark:bg-base-200 animate-pulse" />;
+    const src = toDataUrl({ mime: image.mime, data: payload });
+    return (
+        <>
+            <img
+                src={src}
+                alt={alt}
+                onClick={() => setZoomed(true)}
+                className="my-3 block max-w-full max-h-[32rem] w-auto rounded-xl border border-gray-200 dark:border-base-200 cursor-zoom-in"
+            />
+            {zoomed && <Lightbox src={src} alt={alt} onClose={() => setZoomed(false)} />}
+        </>
+    );
+}
+
+// react-markdown drops data: URLs by default; allow stored image references and inline images only.
+const urlTransform = (url: string, key: string) =>
+    key === 'src' && (url.startsWith('attachment:') || /^data:image\//i.test(url)) ? url : defaultUrlTransform(url);
+
+export const MarkdownContent = memo(function MarkdownContent({ text, images }: { text: string; images?: ChatAttachment[] }) {
+    const components = useMemo(
+        () => ({
+            ...markdownComponents,
+            img: ({ src, alt }: { src?: string; alt?: string }) => {
+                const id = attachmentIdFromUrl(src);
+                const image = id ? images?.find((a) => a.id === id) : undefined;
+                if (image) return <ReplyImage image={image} alt={alt || image.name} />;
+                if (id) return null;
+                return <img src={src} alt={alt} className="my-3 block max-w-full max-h-[32rem] w-auto rounded-xl" />;
+            },
+        }),
+        [images]
+    );
     return (
         <div className={MARKDOWN_CLASSES}>
-            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
                 {text}
             </Markdown>
         </div>
@@ -143,6 +191,7 @@ export const ChatMessageView = memo(function ChatMessageView({ message, isLast, 
     }
 
     const waiting = message.pending && !message.content && !message.thinking;
+    const copyable = stripReplyImages(message.content);
     const meta = [
         message.model,
         message.protocol,
@@ -162,7 +211,7 @@ export const ChatMessageView = memo(function ChatMessageView({ message, isLast, 
                     <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
                 </div>
             ) : (
-                message.content && <MarkdownContent text={message.content} />
+                message.content && <MarkdownContent text={message.content} images={message.attachments} />
             )}
 
             {message.error && (
@@ -179,8 +228,8 @@ export const ChatMessageView = memo(function ChatMessageView({ message, isLast, 
                         !isLast && 'opacity-0 group-hover:opacity-100'
                     )}
                 >
-                    {message.content && (
-                        <CopyButton text={message.content} className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-base-200 hover:text-gray-700 dark:hover:text-gray-200" />
+                    {copyable && (
+                        <CopyButton text={copyable} className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-base-200 hover:text-gray-700 dark:hover:text-gray-200" />
                     )}
                     {onRegenerate && (
                         <button

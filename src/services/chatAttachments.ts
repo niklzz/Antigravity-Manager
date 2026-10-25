@@ -154,3 +154,67 @@ export async function deleteAttachmentData(ids: string[]): Promise<void> {
         // nothing persisted, nothing to clean
     }
 }
+
+// ── Images in model replies ────────────────────────────────────────────────
+
+/** URL scheme that points an image in a stored reply at its payload in attachment storage. */
+const ATTACHMENT_SCHEME = 'attachment:';
+
+/** Markdown image with an inline base64 payload: the form the proxy uses for generated images. */
+const DATA_IMAGE_MD = /!\[([^\]]*)\]\(data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)\)/g;
+const ATTACHMENT_IMAGE_MD = /!\[([^\]]*)\]\(attachment:([\w-]+)\)/g;
+
+/**
+ * Move inline images out of reply text into attachment storage, leaving `attachment:<id>`
+ * references behind, so multi-megabyte payloads never reach the localStorage-backed chat store.
+ * Only complete images are moved; a partial one stays until the rest of it streams in.
+ */
+export function extractReplyImages(text: string, makeId: () => string): { text: string; images: ChatAttachment[] } {
+    const images: ChatAttachment[] = [];
+    if (!text.includes('](data:image/')) return { text, images };
+    const replaced = text.replace(DATA_IMAGE_MD, (_match, alt: string, mime: string, data: string) => {
+        const id = makeId();
+        void saveAttachmentData(id, data);
+        const ext = mime === 'image/jpeg' ? 'jpg' : mime.slice('image/'.length).split('+')[0];
+        images.push({ id, name: `image.${ext}`, mime, size: Math.floor((data.length * 3) / 4), kind: 'image' });
+        return `![${alt}](${ATTACHMENT_SCHEME}${id})`;
+    });
+    return { text: replaced, images };
+}
+
+export const attachmentIdFromUrl = (url: string | undefined) =>
+    url?.startsWith(ATTACHMENT_SCHEME) ? url.slice(ATTACHMENT_SCHEME.length) : null;
+
+/**
+ * Expand `attachment:<id>` references back into data-URL images for sending, so the model sees
+ * its earlier output (needed to edit a generated image). Unavailable ones become a text note.
+ */
+export async function inlineReplyImages(text: string, images: ChatAttachment[]): Promise<string> {
+    const ids = [...text.matchAll(ATTACHMENT_IMAGE_MD)].map((m) => m[2]);
+    if (ids.length === 0) return text;
+    const payloads = new Map(await Promise.all(ids.map(async (id) => [id, await loadAttachmentData(id)] as const)));
+    return text.replace(ATTACHMENT_IMAGE_MD, (_match, alt: string, id: string) => {
+        const meta = images.find((a) => a.id === id);
+        const data = payloads.get(id);
+        return meta && data ? `![${alt}](${toDataUrl({ mime: meta.mime, data })})` : '[Image unavailable]';
+    });
+}
+
+/** Split text at inline data-URL images, for protocols that carry images as separate parts. */
+export function splitInlineImages(text: string): Array<{ text: string } | { mime: string; data: string }> {
+    const out: Array<{ text: string } | { mime: string; data: string }> = [];
+    let last = 0;
+    for (const m of text.matchAll(DATA_IMAGE_MD)) {
+        const before = text.slice(last, m.index);
+        if (before.trim()) out.push({ text: before });
+        out.push({ mime: m[2], data: m[3] });
+        last = m.index! + m[0].length;
+    }
+    const rest = text.slice(last);
+    if (rest.trim() || out.length === 0) out.push({ text: rest });
+    return out;
+}
+
+/** Reply text without image markup, for copying to the clipboard. */
+export const stripReplyImages = (text: string) =>
+    text.replace(/!\[[^\]]*\]\((?:attachment|data):[^)]*\)\s*/g, '').trim();

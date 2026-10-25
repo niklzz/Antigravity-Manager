@@ -1,6 +1,6 @@
 import { readSse } from '../utils/sse';
 import { isTauri } from '../utils/env';
-import { textFilePrompt, toDataUrl, type LoadedAttachment } from './chatAttachments';
+import { splitInlineImages, textFilePrompt, toDataUrl, type LoadedAttachment } from './chatAttachments';
 
 /** Client protocol used to reach the local proxy. Each one exercises a different adapter. */
 export type ChatProtocol = 'openai' | 'anthropic' | 'gemini';
@@ -189,7 +189,12 @@ const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
                     text: (text) => ({ text }),
                     image: (a) => ({ inlineData: { mimeType: a.mime, data: a.data } }),
                     pdf: (a) => ({ inlineData: { mimeType: a.mime, data: a.data } }),
-                }),
+                }).flatMap((part) =>
+                    // Native Gemini takes earlier generated images as parts, not as markdown in the text.
+                    typeof part.text === 'string'
+                        ? splitInlineImages(part.text).map((s) => ('text' in s ? { text: s.text } : { inlineData: { mimeType: s.mime, data: s.data } }))
+                        : [part]
+                ),
             })),
             ...(o.system && { systemInstruction: { parts: [{ text: o.system }] } }),
             ...(o.temperature !== undefined && { generationConfig: { temperature: o.temperature } }),
@@ -198,6 +203,10 @@ const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
             const p = raw?.response ?? raw;
             const candidate = p?.candidates?.[0];
             for (const part of candidate?.content?.parts ?? []) {
+                // Same markdown form the proxy uses for generated images on the other protocols.
+                if (part?.inlineData?.data && !part.thought) {
+                    o.onText(`![image](data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data})`);
+                }
                 if (typeof part?.text !== 'string') continue;
                 if (part.thought) o.onThinking?.(part.text);
                 else o.onText(part.text);

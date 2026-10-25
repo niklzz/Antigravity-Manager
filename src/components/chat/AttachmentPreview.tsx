@@ -19,7 +19,7 @@ export function useAttachmentData(id: string, initial?: string): string | null |
     return data;
 }
 
-function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+export function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
         document.addEventListener('keydown', onKey);
